@@ -4,6 +4,7 @@ Setiap aksi di sini adalah padanan server dari `frontend/src/lib/demo/actions.ts
 sehingga perilaku mode demo dan mode live identik.
 """
 import datetime as dt
+import hmac
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,9 +15,10 @@ from ..database import get_db
 from ..deps import Principal, bearer, ensure_role, get_principal
 from ..models import (
     AcademicYear, Announcement, Applicant, Bill, Employee, EmployeeAttendance, Event, Exam, ExamResult,
-    Book, BookLoan, BookReservation, Discussion, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
+    Book, BookLoan, BookReservation, Discussion, ExamCheckin, ExamDispensation, ExamPeriod, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
     Setting, Student, StudentAttendance, Submission, Unit, User, VirtualClass,
 )
+from ..examcard import card_payload, card_token, eligibility, parse_payload, period_for_exam
 from ..importer import run_import
 from ..security import hash_password, verify_password
 from ..serialize import to_dict
@@ -51,8 +53,11 @@ def compute_final(g: dict) -> float | None:
 
 
 def receipt_no(db: Session) -> str:
-    n = (db.scalar(select(func.count(Payment.id))) or 0) + 1
-    return f"KW/{today():%Y%m}/{n:05d}"
+    """Nomor kwitansi berurutan per bulan: urutan tertinggi bulan ini + 1 (aman walau ada data terhapus)."""
+    prefix = f"KW/{today():%Y%m}/"
+    existing = db.scalars(select(Payment.receipt_no).where(Payment.receipt_no.like(prefix + "%")))
+    last = max((int(r[len(prefix):]) for r in existing if r[len(prefix):].isdigit()), default=0)
+    return f"{prefix}{last + 1:05d}"
 
 
 def apply_payment(db: Session, bill: Bill, amount: int, method: str, received_by: str, note: str = "") -> Payment:
@@ -317,6 +322,10 @@ def exams_submit(db: Session, p: dict, user: Principal):
         raise HTTPException(404, "Ujian tidak ditemukan")
     if db.scalars(select(ExamResult).where(ExamResult.exam_id == exam.id, ExamResult.student_id == sid)).first():
         raise HTTPException(400, "Anda sudah mengerjakan ujian ini")
+    st = db.get(Student, sid)
+    period = period_for_exam(db, exam.type, exam.date, st.unit_id)
+    if period and not eligibility(db, period, st)["eligible"]:
+        raise HTTPException(403, "Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu")
     answers = list(p.get("answers") or [])
     questions = exam.questions or []
     correct = sum(1 for i, q in enumerate(questions) if i < len(answers) and answers[i] == q.get("answer"))
@@ -772,6 +781,96 @@ def library_settings(db: Session, p: dict, user: Principal):
     return to_dict(cfg)
 
 
+# ------------------------------------------------------------------ kartu ujian
+PROCTORS = ("admin", "kepsek", "kesiswaan", "guru")
+
+
+def _card_meta(db: Session, st: Student) -> dict:
+    cls = db.get(SchoolClass, st.class_id) if st.class_id else None
+    mates = sorted(db.scalars(select(Student).where(Student.class_id == st.class_id, Student.status == "aktif")), key=lambda x: x.name) if cls else []
+    seat = next((i + 1 for i, x in enumerate(mates) if x.id == st.id), 0)
+    return {"class_name": cls.name if cls else "-", "room": cls.room if cls else "-", "seat": seat}
+
+
+def examcard_get(db: Session, p: dict, user: Principal):
+    period = db.get(ExamPeriod, int(p.get("period_id") or 0))
+    st = db.get(Student, int(p.get("student_id") or 0))
+    if not period or not st:
+        raise HTTPException(404, "Data kartu ujian tidak ditemukan")
+    if user.is_family and st.id not in user.student_ids:
+        raise HTTPException(403, "Anda tidak dapat melihat kartu ujian ini")
+    if not user.is_family:
+        ensure_role(user, "admin", "kepsek", "keuangan", "kesiswaan", "guru")
+    el = eligibility(db, period, st)
+    return {
+        **el, "dispensation": to_dict(el["dispensation"]) if el["dispensation"] else None, "period": to_dict(period), **_card_meta(db, st),
+        "payload": card_payload(period.id, st) if el["eligible"] else None,
+    }
+
+
+def examcard_verify(db: Session, p: dict, user: Principal):
+    ensure_role(user, *PROCTORS)
+    period_id, nis, token_ok = int(p.get("period_id") or 0), (p.get("nis") or "").strip(), None
+    if p.get("payload"):
+        parsed = parse_payload(p["payload"])
+        if not parsed:
+            return {"valid": False, "reason": "QR tidak dikenali sebagai kartu ujian iSchool", "student": None}
+        period_id, nis, token = parsed
+        st_tok = db.scalars(select(Student).where(Student.nis == nis)).first()
+        token_ok = bool(st_tok) and hmac.compare_digest(card_token(period_id, st_tok.id), token)
+    period = db.get(ExamPeriod, period_id)
+    st = db.scalars(select(Student).where(Student.nis == nis)).first() if nis else None
+    if not period:
+        return {"valid": False, "reason": "Periode ujian tidak ditemukan", "student": None}
+    if not st:
+        return {"valid": False, "reason": f"Siswa dengan NIS {nis or '-'} tidak ditemukan", "student": None}
+    el = eligibility(db, period, st)
+    meta = _card_meta(db, st)
+    reason = ""
+    if token_ok is False:
+        reason = "Kode keamanan QR tidak cocok (kartu palsu/rusak)"
+    elif not el["applicable"]:
+        reason = "Siswa bukan peserta periode ujian ini"
+    elif not el["eligible"]:
+        reason = "Persyaratan administrasi belum terpenuhi"
+    elif p.get("class_id") and st.class_id != int(p["class_id"]):
+        reason = f"Bukan peserta kelas ini (terdaftar di {meta['class_name']})"
+    valid = not reason
+    start = dt.datetime.combine(today(), dt.time.min)
+    already = db.scalars(select(ExamCheckin).where(ExamCheckin.period_id == period.id, ExamCheckin.student_id == st.id, ExamCheckin.valid, ExamCheckin.checked_at >= start)).first() is not None
+    db.add(ExamCheckin(period_id=period.id, student_id=st.id, class_id=st.class_id, exam_id=None, valid=valid,
+                       note=reason or ("Verifikasi manual (NIS)" if token_ok is None else "QR valid"), checked_by=user.user.name, checked_at=now()))
+    db.commit()
+    return {"valid": valid, "reason": reason, "already": already, "method": "manual" if token_ok is None else "qr",
+            "student": {"id": st.id, "name": st.name, "nis": st.nis, "class_name": meta["class_name"], "gender": st.gender},
+            "period": to_dict(period), "requirements": el["requirements"], "dispensation": to_dict(el["dispensation"]) if el["dispensation"] else None}
+
+
+def examcard_dispense(db: Session, p: dict, user: Principal):
+    ensure_role(user, "admin", "kepsek", "keuangan")
+    reason = (p.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, "Alasan dispensasi wajib diisi")
+    pid, sid = int(p.get("period_id") or 0), int(p.get("student_id") or 0)
+    if not db.get(ExamPeriod, pid) or not db.get(Student, sid):
+        raise HTTPException(404, "Data tidak ditemukan")
+    if db.scalars(select(ExamDispensation).where(ExamDispensation.period_id == pid, ExamDispensation.student_id == sid)).first():
+        raise HTTPException(400, "Dispensasi sudah diberikan")
+    row = ExamDispensation(period_id=pid, student_id=sid, reason=reason, granted_by=user.user.name, created_at=now())
+    db.add(row)
+    db.commit()
+    return to_dict(row)
+
+
+def examcard_revoke(db: Session, p: dict, user: Principal):
+    ensure_role(user, "admin", "kepsek", "keuangan")
+    row = db.get(ExamDispensation, int(p.get("id") or 0))
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
+
 HANDLERS = {
     "public.portal": public_portal,
     "ppdb.register": ppdb_register,
@@ -809,6 +908,10 @@ HANDLERS = {
     "library.reserve": library_reserve,
     "library.cancelReservation": library_cancel_reservation,
     "library.settings": library_settings,
+    "examcard.get": examcard_get,
+    "examcard.verify": examcard_verify,
+    "examcard.dispense": examcard_dispense,
+    "examcard.revokeDispensation": examcard_revoke,
 }
 
 

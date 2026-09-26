@@ -17,8 +17,10 @@ export function nowTime(): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Waktu lokal ISO tanpa zona (YYYY-MM-DDTHH:MM:SS), konsisten dengan today() dan backend. */
 export function nowISO(): string {
-  return new Date().toISOString();
+  const d = new Date();
+  return `${toISODate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 export function addDays(date: string, days: number): string {

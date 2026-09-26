@@ -3,7 +3,7 @@ import type { AcademicYear, Book, Employee, Student } from '../types';
 import type { ImportKind, ImportResult, ImportRowResult } from '../importSpec';
 import { getDB, insert, patch, commit } from './store';
 import { DEMO_PASSWORD } from './seed';
-import { computeFinal } from '../utils';
+import { computeFinal, nowISO } from '../utils';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v).trim());
@@ -178,7 +178,7 @@ export function runImport(kind: ImportKind, rows: Row[], dryRun: boolean): Impor
       if (!errors.length && apply) {
         const data = { code: kode, title: judul, author: str(r.pengarang), publisher: str(r.penerbit), year, isbn: str(r.isbn), category: cat as Book['category'], unit_id: unit?.id ?? null, location: str(r.lokasi_rak), copies, description: str(r.deskripsi) };
         if (existing) patch('books', existing.id, data);
-        else insert('books', { ...data, cover_url: '', created_at: new Date().toISOString() });
+        else insert('books', { ...data, cover_url: '', created_at: nowISO() });
       }
     }
 

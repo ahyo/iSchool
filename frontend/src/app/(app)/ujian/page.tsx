@@ -7,6 +7,8 @@ import { Avatar, Badge, Button, Card, Empty, Field, Input, Loading, Modal, PageH
 import { cn, avg, fmtDate, round, today } from '@/lib/utils';
 import type { Exam } from '@/lib/types';
 import { QuestionEditor, emptyQuestion, validateQuestions } from '@/components/QuestionEditor';
+import Link from 'next/link';
+import { examEligibility, periodForExam } from '@/lib/examcard';
 
 const TYPE_LABEL: Record<Exam['type'], string> = { UH: 'Ulangan Harian', PTS: 'Penilaian Tengah Semester', PAS: 'Penilaian Akhir Semester', PAT: 'Penilaian Akhir Tahun', US: 'Ujian Sekolah', UKK: 'Uji Kompetensi Keahlian' };
 
@@ -18,7 +20,7 @@ export default function UjianPage() {
 
 /* ============================ SISWA / ORTU ============================ */
 function StudentExams({ scope }: { scope: LearningScope }) {
-  const { data } = useData(['exams', 'exam_results', 'bills', 'fee_types']);
+  const { data } = useData(['exams', 'exam_results', 'bills', 'fee_types', 'exam_periods', 'exam_dispensations']);
   const [taking, setTaking] = useState<Exam | null>(null);
   if (!data) return <Loading />;
   const st = scope.student!;
@@ -29,11 +31,12 @@ function StudentExams({ scope }: { scope: LearningScope }) {
   const done = exams.filter((e) => result(e) || e.date < today()).reverse();
   const examFees = data.fee_types.filter((f) => f.category === 'ujian').map((f) => f.id);
   const unpaidExamFee = data.bills.some((b) => b.student_id === st.id && examFees.includes(b.fee_type_id) && b.status !== 'lunas');
+  const cardOk = (e: Exam) => { const p = periodForExam(data.exam_periods, e.type, e.date, st.unit_id); return !p || examEligibility(data, p, st).eligible; };
 
   return (
     <>
       <PageHeader title="Ujian & CBT" subtitle={`${st.name} · ${exams.length} ujian terjadwal semester ini`} />
-      {unpaidExamFee && <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800"><AlertTriangle className="h-4 w-4" /> Terdapat biaya ujian yang belum lunas. Kartu ujian PTS/PAS akan diterbitkan setelah pelunasan.</div>}
+      {unpaidExamFee && <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800"><AlertTriangle className="h-4 w-4" /> Terdapat biaya ujian yang belum lunas. Kartu ujian PTS/PAS akan diterbitkan setelah pelunasan. <Link href="/kartu-ujian/" className="font-semibold underline">Lihat kartu ujian</Link></div>}
       <h3 className="mb-2 font-semibold">Ujian Mendatang & Hari Ini</h3>
       <div className="mb-6 grid gap-3 md:grid-cols-2">
         {upcoming.map((e) => {
@@ -47,7 +50,7 @@ function StudentExams({ scope }: { scope: LearningScope }) {
                   <p className="text-sm text-slate-500">{scope.subjects.get(e.subject_id)?.name} · {TYPE_LABEL[e.type]}</p>
                   <p className="mt-1 text-sm">{fmtDate(e.date, { weekday: 'long', day: 'numeric', month: 'long' })} · {e.start_time} · {e.duration} menit · {e.questions.length} soal</p>
                 </div>
-                {!readOnly && (openNow ? <Button onClick={() => setTaking(e)}><MonitorPlay className="h-4 w-4" /> Mulai</Button> : <Badge tone="violet">Belum dibuka</Badge>)}
+                {!readOnly && (openNow ? (cardOk(e) ? <Button onClick={() => setTaking(e)}><MonitorPlay className="h-4 w-4" /> Mulai</Button> : <Link href="/kartu-ujian/"><Badge tone="red">Kartu ujian belum terbit</Badge></Link>) : <Badge tone="violet">Belum dibuka</Badge>)}
               </div>
             </Card>
           );

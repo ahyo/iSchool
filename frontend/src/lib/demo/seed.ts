@@ -2,7 +2,7 @@ import type {
   DB, Unit, Employee, Subject, SchoolClass, Student, Guardian, Schedule, StudentAttendance,
   EmployeeAttendance, Grade, FeeType, Bill, Payment, Applicant, Announcement, EventItem,
   StudentRecord, Material, Assignment, Submission, Exam, ExamResult, Question, Major, User,
-  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal, Book, BookLoan, BookReservation,
+  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal, Book, BookLoan, BookReservation, ExamPeriod,
 } from '../types';
 import { addDays, isWeekend, today, pad, computeFinal } from '../utils';
 
@@ -875,6 +875,29 @@ export function buildSeed(): DB {
     { id: 3, book_id: bk('Hujan').id, student_id: pick(activeStudents).id, employee_id: null, user_id: 0, status: 'dipinjam', created_at: `${addDays(TODAY, -12)}T10:00:00` },
   );
 
+  // ---------- Kartu ujian ----------
+  const ptsFeeIds = fee_types.filter((f) => f.name.startsWith('Ujian Tengah Semester')).map((f) => f.id);
+  const exam_periods: ExamPeriod[] = [
+    { id: 1, name: 'Penilaian Tengah Semester (PTS) Ganjil 2026/2027', type: 'PTS', academic_year_id: AY, unit_id: null, start_date: TODAY, end_date: addDays(TODAY, 10), spp_until: '2026-09', required_fee_type_ids: ptsFeeIds, is_active: true, notes: 'Kartu ujian wajib ditunjukkan kepada pengawas sebelum ujian dimulai.' },
+  ];
+  const settle = (b: Bill) => {
+    const rest = b.amount - b.discount - b.paid_amount;
+    if (rest <= 0) return;
+    payments.push({ id: payments.length + 1, bill_id: b.id, student_id: b.student_id, applicant_id: null, amount: rest, method: 'Virtual Account', receipt_no: `KW/202609/${pad(90000 + payments.length, 5)}`, paid_at: `${addDays(TODAY, -3)}T09:00:00`, received_by: 'Pembayaran Online', note: '' });
+    b.paid_amount += rest;
+    b.status = 'lunas';
+  };
+  const sppIds = new Set(fee_types.filter((f) => f.category === 'bulanan').map((f) => f.id));
+  // Anak SMP akun ortu: memenuhi semua syarat
+  bills.filter((b) => b.student_id === sibling.id && ((sppIds.has(b.fee_type_id) && b.period <= '2026-09') || ptsFeeIds.includes(b.fee_type_id))).forEach(settle);
+  // Akun siswa demo: biaya PTS lunas, tetapi SPP September belum -> kartu belum terbit
+  bills.filter((b) => b.student_id === demoStudent.id && (ptsFeeIds.includes(b.fee_type_id) || (sppIds.has(b.fee_type_id) && b.period < '2026-09'))).forEach(settle);
+  const sept = bills.find((b) => b.student_id === demoStudent.id && sppIds.has(b.fee_type_id) && b.period === '2026-09')!;
+  for (let i = payments.length - 1; i >= 0; i--) if (payments[i].bill_id === sept.id) payments.splice(i, 1);
+  sept.paid_amount = 0;
+  sept.status = 'belum';
+  payments.forEach((p, i) => (p.id = i + 1));
+
   return {
     settings: [{
       id: 1, name: 'Yayasan Pendidikan Nusantara Cendekia', foundation: 'Yayasan Nusantara Cendekia', address: 'Jl. Pendidikan No. 1-5, Kebayoran Baru, Jakarta Selatan 12110',
@@ -888,6 +911,7 @@ export function buildSeed(): DB {
     fee_types, bills, payments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
     lessons, lesson_progress, virtual_classes, discussions, enrollments,
     expenses, leave_requests, teaching_journals, books, book_loans, book_reservations,
+    exam_periods, exam_dispensations: [], exam_checkins: [],
   };
 }
 

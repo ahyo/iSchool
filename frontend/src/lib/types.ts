@@ -527,6 +527,42 @@ export interface BookReservation {
   created_at: string;
 }
 
+/** Periode ujian (mis. PTS Ganjil) beserta syarat penerbitan kartu ujian. */
+export interface ExamPeriod {
+  id: number;
+  name: string;
+  type: 'PTS' | 'PAS' | 'PAT' | 'US' | 'UKK';
+  academic_year_id: number;
+  unit_id: number | null;
+  start_date: string;
+  end_date: string;
+  spp_until: string; // YYYY-MM: SPP wajib lunas s.d. bulan ini ('' = tidak disyaratkan)
+  required_fee_type_ids: number[];
+  is_active: boolean;
+  notes: string;
+}
+
+export interface ExamDispensation {
+  id: number;
+  period_id: number;
+  student_id: number;
+  reason: string;
+  granted_by: string;
+  created_at: string;
+}
+
+export interface ExamCheckin {
+  id: number;
+  period_id: number;
+  student_id: number;
+  class_id: number | null;
+  exam_id: number | null;
+  valid: boolean;
+  note: string;
+  checked_by: string;
+  checked_at: string;
+}
+
 export interface DB {
   settings: Settings[];
   units: Unit[];
@@ -567,6 +603,9 @@ export interface DB {
   books: Book[];
   book_loans: BookLoan[];
   book_reservations: BookReservation[];
+  exam_periods: ExamPeriod[];
+  exam_dispensations: ExamDispensation[];
+  exam_checkins: ExamCheckin[];
 }
 
 export type Resource = keyof DB;

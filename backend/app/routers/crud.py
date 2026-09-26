@@ -38,6 +38,8 @@ WRITE_ROLES: dict[str, set[str]] = {
     "leave_requests": ADMIN,  # lewat aksi leave.submit / leave.review
     "books": {"admin", "pustakawan"},
     "book_loans": ADMIN, "book_reservations": ADMIN,  # lewat aksi library.*
+    "exam_periods": {"admin", "keuangan", "kesiswaan"},
+    "exam_dispensations": ADMIN, "exam_checkins": ADMIN,  # lewat aksi examcard.*
 }
 # Data yang tidak boleh dilihat siswa/orang tua sama sekali
 STAFF_ONLY_READ = {"applicants", "teaching_journals"}

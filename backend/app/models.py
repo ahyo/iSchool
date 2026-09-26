@@ -565,6 +565,47 @@ class BookReservation(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 
+class ExamPeriod(Base):
+    """Periode ujian (PTS/PAS/...) beserta syarat penerbitan kartu ujian."""
+    __tablename__ = "exam_periods"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    type: Mapped[str] = mapped_column(String(5))
+    academic_year_id: Mapped[int | None] = mapped_column(FK("academic_years.id"), nullable=True)
+    unit_id: Mapped[int | None] = mapped_column(FK("units.id"), nullable=True)
+    start_date: Mapped[dt.date] = mapped_column(Date)
+    end_date: Mapped[dt.date] = mapped_column(Date)
+    spp_until: Mapped[str] = mapped_column(String(7), default="")  # YYYY-MM
+    required_fee_type_ids: Mapped[list] = mapped_column(JSON, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class ExamDispensation(Base):
+    __tablename__ = "exam_dispensations"
+    __table_args__ = (UniqueConstraint("period_id", "student_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    period_id: Mapped[int] = mapped_column(ForeignKey("exam_periods.id", ondelete="CASCADE"))
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    granted_by: Mapped[str] = mapped_column(String(150), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class ExamCheckin(Base):
+    """Log verifikasi kartu ujian oleh pengawas."""
+    __tablename__ = "exam_checkins"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    period_id: Mapped[int] = mapped_column(ForeignKey("exam_periods.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    class_id: Mapped[int | None] = mapped_column(FK("classes.id"), nullable=True)
+    exam_id: Mapped[int | None] = mapped_column(FK("exams.id"), nullable=True)
+    valid: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str] = mapped_column(String(250), default="")
+    checked_by: Mapped[str] = mapped_column(String(150), default="")
+    checked_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
 # Resource REST -> model (urutan = urutan aman untuk seeding karena foreign key)
 RESOURCES: dict[str, type[Base]] = {
     "settings": Setting,
@@ -606,4 +647,7 @@ RESOURCES: dict[str, type[Base]] = {
     "books": Book,
     "book_loans": BookLoan,
     "book_reservations": BookReservation,
+    "exam_periods": ExamPeriod,
+    "exam_dispensations": ExamDispensation,
+    "exam_checkins": ExamCheckin,
 }

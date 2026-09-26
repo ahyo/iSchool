@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, UserPlus, School, BookOpen, CalendarDays, Briefcase, Network, ClipboardCheck, Fingerprint,
-  FileText, NotebookPen, Library, MonitorPlay, History, FileUp, UserCog, CalendarX, BookMarked, TrendingDown, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
+  FileText, NotebookPen, Library, MonitorPlay, IdCard, ScanLine, History, FileUp, UserCog, CalendarX, BookMarked, TrendingDown, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
   Megaphone, Settings, BarChart3, Trophy,
 } from 'lucide-react';
 import type { Role } from './types';
@@ -39,6 +39,8 @@ export const NAV: NavGroup[] = [
     { href: '/materi', label: 'Materi Pelajaran', icon: FileText, roles: ['admin', 'kepsek', 'guru', 'siswa'] },
     { href: '/tugas', label: 'Tugas', icon: NotebookPen, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/ujian', label: 'Ujian & CBT', icon: FileQuestion, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
+    { href: '/kartu-ujian', label: 'Kartu Ujian', icon: IdCard, roles: ['admin', 'kepsek', 'keuangan', 'kesiswaan', 'siswa', 'ortu'] },
+    { href: '/verifikasi-ujian', label: 'Verifikasi Kartu Ujian', icon: ScanLine, roles: ['admin', 'kepsek', 'kesiswaan', 'guru'] },
     { href: '/nilai', label: 'Nilai & Rapor', icon: GraduationCap, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/perpustakaan', label: 'Perpustakaan', icon: Library, roles: ['admin', 'kepsek', 'pustakawan', 'guru', 'siswa', 'ortu'] },
     { href: '/jurnal', label: 'Jurnal Mengajar', icon: BookMarked, roles: ['admin', 'kepsek', 'guru'] },

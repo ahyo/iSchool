@@ -5,15 +5,17 @@ import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
 import { runImport } from './importer';
 import { availableCopies, lateDays, LIB_STAFF } from '../library';
+import { demoToken, examEligibility, parseCardPayload, periodForExam, QR_PREFIX } from '../examcard';
 import type { ImportKind } from '../importSpec';
 import { computeFinal, nowISO, nowTime, pad, today, addDays, isWeekend } from '../utils';
 
 type Handler = (p: any, user: User | null) => unknown;
 
+/** Nomor kwitansi berurutan per bulan: urutan tertinggi bulan ini + 1 (aman walau ada data terhapus). */
 function receiptNo() {
-  const d = getDB();
-  const ym = today().slice(0, 7).replace('-', '');
-  return `KW/${ym}/${pad(d.payments.length + 1, 5)}`;
+  const prefix = `KW/${today().slice(0, 7).replace('-', '')}/`;
+  const last = getDB().payments.filter((p) => p.receipt_no.startsWith(prefix)).reduce((m, p) => Math.max(m, Number(p.receipt_no.slice(prefix.length)) || 0), 0);
+  return `${prefix}${pad(last + 1, 5)}`;
 }
 
 function applyPayment(bill: Bill, amount: number, method: Payment['method'], receivedBy: string, note = '') {
@@ -219,6 +221,9 @@ export const actions: Record<string, Handler> = {
     const exam = d.exams.find((e) => e.id === p.exam_id);
     if (!exam) throw new Error('Ujian tidak ditemukan');
     if (d.exam_results.some((r) => r.exam_id === exam.id && r.student_id === p.student_id)) throw new Error('Anda sudah mengerjakan ujian ini');
+    const st = d.students.find((x) => x.id === p.student_id);
+    const period = st && periodForExam(d.exam_periods, exam.type, exam.date, st.unit_id);
+    if (st && period && !examEligibility(d, period, st).eligible) throw new Error('Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu');
     const correct = exam.questions.filter((q, i) => p.answers[i] === q.answer).length;
     const score = exam.questions.length ? Math.round((correct / exam.questions.length) * 100) : 0;
     const row = insert('exam_results', { exam_id: exam.id, student_id: p.student_id, answers: p.answers, score, submitted_at: nowISO() });
@@ -499,6 +504,69 @@ export const actions: Record<string, Handler> = {
     const row = patch('settings', getDB().settings[0].id, { library_loan_days: days, library_max_loans: max, library_fine_per_day: fine });
     commit();
     return row;
+  },
+
+  // ---------------- Kartu ujian ----------------
+  'examcard.get': (p: { period_id: number; student_id: number }, user) => {
+    const d = getDB();
+    const period = d.exam_periods.find((x) => x.id === Number(p.period_id));
+    const st = d.students.find((x) => x.id === Number(p.student_id));
+    if (!period || !st) throw new Error('Data kartu ujian tidak ditemukan');
+    const own = (user?.role === 'siswa' && user.student_id === st.id) || (user?.role === 'ortu' && st.guardian_id === user.guardian_id);
+    if (!user || !(own || ['admin', 'kepsek', 'keuangan', 'kesiswaan', 'guru'].includes(user.role))) throw new Error('Anda tidak dapat melihat kartu ujian ini');
+    const el = examEligibility(d, period, st);
+    const cls = d.classes.find((c) => c.id === st.class_id);
+    const seat = d.students.filter((x) => x.class_id === st.class_id && x.status === 'aktif').sort((a, b) => a.name.localeCompare(b.name)).findIndex((x) => x.id === st.id) + 1;
+    return { ...el, period, class_name: cls?.name || '-', room: cls?.room || '-', seat, payload: el.eligible ? `${QR_PREFIX}:${period.id}:${st.nis}:${demoToken(period.id, st.id)}` : null };
+  },
+
+  'examcard.verify': (p: { payload?: string; nis?: string; period_id?: number; class_id?: number | null }, user) => {
+    if (!user || !['admin', 'kepsek', 'kesiswaan', 'guru'].includes(user.role)) throw new Error('Hanya pengawas ujian yang dapat memverifikasi kartu');
+    const d = getDB();
+    let periodId = Number(p.period_id) || 0;
+    let nis = (p.nis || '').trim();
+    let tokenOk: boolean | null = null;
+    if (p.payload) {
+      const parsed = parseCardPayload(p.payload);
+      if (!parsed) return { valid: false, reason: 'QR tidak dikenali sebagai kartu ujian iSchool', student: null };
+      periodId = parsed.period_id;
+      nis = parsed.nis;
+      const stTok = d.students.find((x) => x.nis === nis);
+      tokenOk = !!stTok && demoToken(periodId, stTok.id) === parsed.token;
+    }
+    const period = d.exam_periods.find((x) => x.id === periodId);
+    const st = d.students.find((x) => x.nis === nis);
+    if (!period) return { valid: false, reason: 'Periode ujian tidak ditemukan', student: null };
+    if (!st) return { valid: false, reason: `Siswa dengan NIS ${nis || '-'} tidak ditemukan`, student: null };
+    const el = examEligibility(d, period, st);
+    const cls = d.classes.find((c) => c.id === st.class_id);
+    let reason = '';
+    if (tokenOk === false) reason = 'Kode keamanan QR tidak cocok (kartu palsu/rusak)';
+    else if (!el.applicable) reason = 'Siswa bukan peserta periode ujian ini';
+    else if (!el.eligible) reason = 'Persyaratan administrasi belum terpenuhi';
+    else if (p.class_id && st.class_id !== Number(p.class_id)) reason = `Bukan peserta kelas ini (terdaftar di ${cls?.name || '-'})`;
+    const valid = !reason;
+    const already = d.exam_checkins.some((c) => c.period_id === period.id && c.student_id === st.id && c.valid && c.checked_at.slice(0, 10) === today());
+    insert('exam_checkins', { period_id: period.id, student_id: st.id, class_id: st.class_id, exam_id: null, valid, note: reason || (tokenOk === null ? 'Verifikasi manual (NIS)' : 'QR valid'), checked_by: user.name, checked_at: nowISO() });
+    commit();
+    return { valid, reason, already, method: tokenOk === null ? 'manual' : 'qr', student: { id: st.id, name: st.name, nis: st.nis, class_name: cls?.name || '-', gender: st.gender }, period, requirements: el.requirements, dispensation: el.dispensation };
+  },
+
+  'examcard.dispense': (p: { period_id: number; student_id: number; reason: string }, user) => {
+    if (!user || !['admin', 'kepsek', 'keuangan'].includes(user.role)) throw new Error('Hanya keuangan/kepala sekolah yang dapat memberi dispensasi');
+    if (!p.reason?.trim()) throw new Error('Alasan dispensasi wajib diisi');
+    const d = getDB();
+    if (d.exam_dispensations.some((x) => x.period_id === Number(p.period_id) && x.student_id === Number(p.student_id))) throw new Error('Dispensasi sudah diberikan');
+    const row = insert('exam_dispensations', { period_id: Number(p.period_id), student_id: Number(p.student_id), reason: p.reason.trim(), granted_by: user.name, created_at: nowISO() });
+    commit();
+    return row;
+  },
+
+  'examcard.revokeDispensation': (p: { id: number }, user) => {
+    if (!user || !['admin', 'kepsek', 'keuangan'].includes(user.role)) throw new Error('Tidak diizinkan');
+    removeRow('exam_dispensations', Number(p.id));
+    commit();
+    return { ok: true };
   },
 
   'academic_years.activate': (p: { id: number }) => {

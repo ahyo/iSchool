@@ -5,7 +5,7 @@ import { api, useData } from '@/lib/api';
 import { useAuth, useWorkspace } from '@/lib/auth';
 import type { Book, BookLoan, BookReservation, DB, Employee, Student } from '@/lib/types';
 import { availableCopies, lateDays, LIB_STAFF, loanFine, loanStatus, pendingReservations } from '@/lib/library';
-import { addDays, cn, downloadCSV, fmtDate, fmtDateTime, rupiah, today } from '@/lib/utils';
+import { addDays, cn, downloadCSV, fmtDate, fmtDateTime, nowISO, rupiah, today } from '@/lib/utils';
 import { Avatar, Badge, Button, Card, DataTable, Empty, Field, Input, Modal, SearchInput, Select, StatCard, Tabs, run, type Column } from './ui';
 import { FormModal } from './FormModal';
 import { BarsChart, DonutChart } from './charts';
@@ -152,7 +152,7 @@ export function Catalog({ d, canManage, reserveAs }: { d: LibData; canManage: bo
           }
           const payload = { ...v, author: v.author || '', publisher: v.publisher || '', isbn: v.isbn || '', location: v.location || '', cover_url: v.cover_url || '', description: v.description || '' };
           if (v.id) await api.update('books', v.id, payload);
-          else await api.create('books', { ...payload, created_at: new Date().toISOString() });
+          else await api.create('books', { ...payload, created_at: nowISO() });
           setEdit(null);
         }, 'Data buku disimpan')} />
     </>

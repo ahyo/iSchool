@@ -6,7 +6,7 @@ import { useAuth, useWorkspace } from '@/lib/auth';
 import { Avatar, Badge, Button, Card, DataTable, Loading, PageHeader, SearchInput, Select, StatCard, run, type Column } from '@/components/ui';
 import { FormModal } from '@/components/FormModal';
 import { indexBy } from '@/lib/scope';
-import { downloadCSV } from '@/lib/utils';
+import { downloadCSV, today } from '@/lib/utils';
 import type { Employee } from '@/lib/types';
 
 export default function PegawaiPage() {
@@ -74,7 +74,7 @@ export default function PegawaiPage() {
         ]}
         onSubmit={(v) => run(async () => {
           if (v.id) await api.update('employees', v.id, v);
-          else await api.create('employees', { phone: '', email: '', education: 'S1', join_date: new Date().toISOString().slice(0, 10), ...v });
+          else await api.create('employees', { phone: '', email: '', education: 'S1', join_date: today(), ...v });
           setEdit(null);
         }, 'Data pegawai disimpan')} />
     </>

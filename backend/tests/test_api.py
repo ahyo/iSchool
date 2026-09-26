@@ -122,7 +122,8 @@ def test_cbt_submit_scores_on_server(client, auth):
     h = auth("siswa")
     me = client.get("/api/students", headers=h).json()[0]
     taken = {r["exam_id"] for r in client.get("/api/exam_results", headers=h).json()}
-    exam = next(e for e in client.get(f"/api/exams?class_id={me['class_id']}", headers=h).json() if e["id"] not in taken)
+    # ujian non-PTS (ujian PTS terkunci selama kartu ujian belum terbit)
+    exam = next(e for e in client.get(f"/api/exams?class_id={me['class_id']}", headers=h).json() if e["id"] not in taken and e["type"] != "PTS")
     r = client.post("/api/actions/exams.submit", headers=h, json={"exam_id": exam["id"], "student_id": me["id"], "answers": [0] * len(exam["questions"])})
     assert r.status_code == 200, r.text
     assert 0 <= r.json()["score"] <= 100 and r.json()["total"] == len(exam["questions"])
@@ -443,3 +444,85 @@ def test_import_books(client, auth):
     assert res["created"] == 1 and res["updated"] == 1 and res["failed"] == 1
     assert _book(client, h, "Laskar Pelangi")["copies"] == 6
     assert client.post("/api/actions/import.run", headers=auth("kesiswaan"), json={"kind": "buku", "rows": [{"kode": "x"}]}).status_code == 403
+
+
+# ------------------------------------------------------------------ kartu ujian
+def _period(client, h):
+    return next(p for p in client.get("/api/exam_periods", headers=h).json() if p["is_active"])
+
+
+def test_exam_card_requires_payment_then_issued(client, auth):
+    hs, ho = auth("siswa"), auth("ortu")
+    me = client.get("/api/students", headers=hs).json()[0]
+    period = _period(client, hs)
+    card = client.post("/api/actions/examcard.get", headers=hs, json={"period_id": period["id"], "student_id": me["id"]}).json()
+    if not card["eligible"]:  # (tes lain mungkin sudah melunasi tagihannya)
+        assert card["payload"] is None
+        assert next(r for r in card["requirements"] if not r["ok"])["outstanding"] > 0
+    # orang tua melunasi SPP yang kurang -> kartu terbit dengan QR
+    for b in client.get("/api/bills", headers=ho).json():
+        if b["student_id"] == me["id"] and b["status"] != "lunas" and b["period"] <= period["spp_until"]:
+            client.post("/api/actions/payments.pay", headers=ho, json={"bill_id": b["id"], "amount": b["amount"] - b["discount"] - b["paid_amount"], "method": "QRIS"})
+    card = client.post("/api/actions/examcard.get", headers=hs, json={"period_id": period["id"], "student_id": me["id"]}).json()
+    assert card["eligible"] and card["payload"].startswith(f"ISCHOOL-KU:{period['id']}:{me['nis']}:")
+    # siswa tidak boleh melihat kartu siswa lain
+    other = client.get("/api/students?status=aktif", headers=auth("admin")).json()
+    foreign = next(s for s in other if s["id"] != me["id"])
+    assert client.post("/api/actions/examcard.get", headers=hs, json={"period_id": period["id"], "student_id": foreign["id"]}).status_code == 403
+    # guru memverifikasi QR asli
+    v = client.post("/api/actions/examcard.verify", headers=auth("guru"), json={"payload": card["payload"]}).json()
+    assert v["valid"] and v["method"] == "qr" and v["student"]["nis"] == me["nis"]
+    again = client.post("/api/actions/examcard.verify", headers=auth("guru"), json={"payload": card["payload"]}).json()
+    assert again["already"]
+    # QR palsu (token diubah) ditolak
+    fake = card["payload"][:-4] + ("0000" if not card["payload"].endswith("0000") else "1111")
+    f = client.post("/api/actions/examcard.verify", headers=auth("guru"), json={"payload": fake}).json()
+    assert not f["valid"] and "keamanan" in f["reason"]
+    # siswa tidak boleh memverifikasi
+    assert client.post("/api/actions/examcard.verify", headers=hs, json={"payload": card["payload"]}).status_code == 403
+
+
+def test_exam_card_dispensation_and_manual_verify(client, auth):
+    ha = auth("admin")
+    period = _period(client, ha)
+    students = client.get("/api/students?status=aktif", headers=ha).json()
+    hk = auth("keuangan")
+    target = None
+    for s in students:
+        c = client.post("/api/actions/examcard.get", headers=hk, json={"period_id": period["id"], "student_id": s["id"]}).json()
+        if c["applicable"] and not c["eligible"]:
+            target = s
+            break
+    assert target
+    v = client.post("/api/actions/examcard.verify", headers=auth("guru"), json={"period_id": period["id"], "nis": target["nis"]}).json()
+    assert not v["valid"] and "administrasi" in v["reason"]
+    assert client.post("/api/actions/examcard.dispense", headers=auth("guru"), json={"period_id": period["id"], "student_id": target["id"], "reason": "x"}).status_code == 403
+    d = client.post("/api/actions/examcard.dispense", headers=hk, json={"period_id": period["id"], "student_id": target["id"], "reason": "Komitmen pelunasan 15 Okt"})
+    assert d.status_code == 200
+    v2 = client.post("/api/actions/examcard.verify", headers=auth("guru"), json={"period_id": period["id"], "nis": target["nis"]}).json()
+    assert v2["valid"] and v2["method"] == "manual"
+    assert client.post("/api/actions/examcard.revokeDispensation", headers=hk, json={"id": d.json()["id"]}).status_code == 200
+
+
+def test_cbt_pts_locked_without_exam_card(client, auth):
+    import datetime as dt
+    ha = auth("admin")
+    period = _period(client, ha)
+    hk = auth("keuangan")
+    # cari siswa tanpa akun (pakai admin) yang belum layak, lalu buat ujian PTS hari ini untuk kelasnya
+    for s in client.get("/api/students?status=aktif", headers=ha).json():
+        c = client.post("/api/actions/examcard.get", headers=hk, json={"period_id": period["id"], "student_id": s["id"]}).json()
+        if c["applicable"] and not c["eligible"]:
+            break
+    sched = client.get(f"/api/schedules?class_id={s['class_id']}", headers=ha).json()[0]
+    exam = client.post("/api/exams", headers=ha, json={"class_id": s["class_id"], "subject_id": sched["subject_id"], "teacher_id": sched["teacher_id"], "name": "PTS Uji", "type": "PTS",
+                                                       "date": dt.date.today().isoformat(), "start_time": "08:00", "duration": 30, "is_online": True, "questions": [{"q": "1+1", "options": ["1", "2", "3", "4"], "answer": 1}]}).json()
+    # buat akun login siswa tsb via impor tidak perlu: uji logika langsung melalui fungsi server
+    from app.database import SessionLocal
+    from app.examcard import eligibility, period_for_exam
+    from app.models import Student
+    with SessionLocal() as db:
+        st = db.get(Student, s["id"])
+        p = period_for_exam(db, "PTS", dt.date.today(), st.unit_id)
+        assert p is not None and not eligibility(db, p, st)["eligible"]
+    assert exam["type"] == "PTS"

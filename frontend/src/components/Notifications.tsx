@@ -6,6 +6,7 @@ import { useData } from '@/lib/api';
 import { useAuth, useProfile } from '@/lib/auth';
 import type { DB, Resource, Role } from '@/lib/types';
 import { addDays, cn, fmtDate, isWeekend, rupiah, today } from '@/lib/utils';
+import { examEligibility } from '@/lib/examcard';
 
 interface Notif {
   id: string;
@@ -17,8 +18,8 @@ interface Notif {
 
 /** Koleksi yang dibutuhkan per peran (hanya memuat data yang relevan). */
 const KEYS: Record<Role, Resource[]> = {
-  siswa: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books'],
-  ortu: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books'],
+  siswa: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books', 'exam_periods', 'exam_dispensations', 'fee_types', 'students'],
+  ortu: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books', 'exam_periods', 'exam_dispensations', 'fee_types', 'students'],
   pustakawan: ['book_loans', 'book_reservations', 'books', 'announcements'],
   guru: ['book_loans', 'books', 'classes', 'student_attendance', 'schedules', 'teaching_journals', 'assignments', 'submissions', 'leave_requests', 'students', 'virtual_classes', 'announcements'],
   keuangan: ['bills', 'payments', 'announcements'],
@@ -54,6 +55,15 @@ function build(role: Role, d: Partial<DB>, ctx: { studentId?: number; classId?: 
 
   if (role === 'siswa' || role === 'ortu') {
     const sid = ctx.studentId;
+    const me = (d.students || []).find((s) => s.id === sid);
+    if (me) {
+      (d.exam_periods || []).filter((p) => p.is_active && p.end_date >= t && (!p.unit_id || p.unit_id === me.unit_id)).forEach((p) => {
+        const el = examEligibility({ bills: d.bills || [], fee_types: d.fee_types || [], exam_dispensations: d.exam_dispensations || [] }, p, me);
+        out.push(el.eligible
+          ? { id: `card-ok-${p.id}`, title: 'Kartu ujian sudah terbit', desc: p.name, href: '/kartu-ujian/', tone: 'green' }
+          : { id: `card-no-${p.id}-${t}`, title: 'Kartu ujian belum terbit', desc: `Lunasi ${rupiah(el.requirements.reduce((a, r) => a + r.outstanding, 0))} untuk ${p.name}`, href: '/kartu-ujian/', tone: 'red' });
+      });
+    }
     const bills = (d.bills || []).filter((b) => b.student_id === sid && b.status !== 'lunas');
     const overdue = bills.filter((b) => b.due_date < t);
     const soon = bills.filter((b) => b.due_date >= t && b.due_date <= addDays(t, 7));

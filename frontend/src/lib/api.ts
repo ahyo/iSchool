@@ -42,6 +42,8 @@ function setSession(token: string | null, user: User | null) {
 
 // ------------------------------------------------------------------ change bus
 const bus = new Set<(res?: string) => void>();
+/** Aksi yang hanya membaca data: tidak memicu muat-ulang koleksi (mencegah render berulang). */
+const READ_ONLY_ACTIONS = new Set(['public.portal', 'ppdb.status', 'examcard.get']);
 function emit(res?: string) {
   bus.forEach((fn) => fn(res));
 }
@@ -161,7 +163,7 @@ export const api = {
       if (!fn) throw new Error(`Aksi ${name} tidak dikenal`);
       out = clone(fn(payload, getSession().user) as T);
     } else out = await http<T>('POST', `/api/actions/${name}`, payload);
-    emit();
+    if (!READ_ONLY_ACTIONS.has(name)) emit();
     return out;
   },
 };
