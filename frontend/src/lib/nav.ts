@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, UserPlus, School, BookOpen, CalendarDays, Briefcase, Network, ClipboardCheck, Fingerprint,
-  FileText, NotebookPen, MonitorPlay, History, FileUp, UserCog, CalendarX, BookMarked, TrendingDown, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
+  FileText, NotebookPen, Library, MonitorPlay, History, FileUp, UserCog, CalendarX, BookMarked, TrendingDown, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
   Megaphone, Settings, BarChart3, Trophy,
 } from 'lucide-react';
 import type { Role } from './types';
@@ -17,7 +17,7 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-const ALL: Role[] = ['admin', 'kepsek', 'keuangan', 'kesiswaan', 'guru', 'siswa', 'ortu'];
+const ALL: Role[] = ['admin', 'kepsek', 'keuangan', 'kesiswaan', 'pustakawan', 'guru', 'siswa', 'ortu'];
 
 export const NAV: NavGroup[] = [
   { title: 'Utama', items: [
@@ -40,13 +40,14 @@ export const NAV: NavGroup[] = [
     { href: '/tugas', label: 'Tugas', icon: NotebookPen, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/ujian', label: 'Ujian & CBT', icon: FileQuestion, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/nilai', label: 'Nilai & Rapor', icon: GraduationCap, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
+    { href: '/perpustakaan', label: 'Perpustakaan', icon: Library, roles: ['admin', 'kepsek', 'pustakawan', 'guru', 'siswa', 'ortu'] },
     { href: '/jurnal', label: 'Jurnal Mengajar', icon: BookMarked, roles: ['admin', 'kepsek', 'guru'] },
     { href: '/riwayat', label: 'Riwayat Akademik', icon: History, roles: ['admin', 'kepsek', 'kesiswaan', 'guru', 'siswa', 'ortu'] },
   ] },
   { title: 'Presensi', items: [
     { href: '/presensi-siswa', label: 'Presensi Siswa', icon: ClipboardCheck, roles: ['admin', 'kepsek', 'kesiswaan', 'guru', 'siswa', 'ortu'], labelFor: { siswa: 'Kehadiran Saya', ortu: 'Kehadiran Anak' } },
     { href: '/izin', label: 'Izin & Sakit', icon: CalendarX, roles: ['admin', 'kepsek', 'kesiswaan', 'guru', 'siswa', 'ortu'], labelFor: { ortu: 'Ajukan Izin/Sakit', siswa: 'Ajukan Izin/Sakit' } },
-    { href: '/presensi-pegawai', label: 'Presensi Guru & Pegawai', icon: Fingerprint, roles: ['admin', 'kepsek', 'guru', 'keuangan', 'kesiswaan'], labelFor: { guru: 'Presensi Saya', keuangan: 'Presensi Saya', kesiswaan: 'Presensi Saya' } },
+    { href: '/presensi-pegawai', label: 'Presensi Guru & Pegawai', icon: Fingerprint, roles: ['admin', 'kepsek', 'guru', 'keuangan', 'kesiswaan', 'pustakawan'], labelFor: { guru: 'Presensi Saya', keuangan: 'Presensi Saya', kesiswaan: 'Presensi Saya', pustakawan: 'Presensi Saya' } },
   ] },
   { title: 'Keuangan', items: [
     { href: '/keuangan/tagihan', label: 'Tagihan Siswa', icon: Receipt, roles: ['admin', 'keuangan', 'kepsek', 'siswa', 'ortu'], labelFor: { siswa: 'Tagihan & Pembayaran', ortu: 'Tagihan & Pembayaran' } },
@@ -60,7 +61,7 @@ export const NAV: NavGroup[] = [
     { href: '/struktur', label: 'Struktur Organisasi', icon: Network, roles: ALL },
   ] },
   { title: 'Sistem', items: [
-    { href: '/impor', label: 'Impor Data', icon: FileUp, roles: ['admin', 'kesiswaan'] },
+    { href: '/impor', label: 'Impor Data', icon: FileUp, roles: ['admin', 'kesiswaan', 'pustakawan'] },
     { href: '/pengaturan', label: 'Pengaturan', icon: Settings, roles: ['admin'] },
     { href: '/profil', label: 'Profil & Keamanan', icon: UserCog, roles: ALL },
   ] },

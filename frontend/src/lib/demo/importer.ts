@@ -1,5 +1,5 @@
 /* Impor data (mode demo). Padanan server: backend/app/importer.py */
-import type { AcademicYear, Employee, Student } from '../types';
+import type { AcademicYear, Book, Employee, Student } from '../types';
 import type { ImportKind, ImportResult, ImportRowResult } from '../importSpec';
 import { getDB, insert, patch, commit } from './store';
 import { DEMO_PASSWORD } from './seed';
@@ -149,6 +149,36 @@ export function runImport(kind: ImportKind, rows: Row[], dryRun: boolean): Impor
           insert('users', { username: nip, password: DEMO_PASSWORD, name: nama, role: 'guru', employee_id: emp.id, student_id: null, guardian_id: null, is_active: true });
           accounts++;
         }
+      }
+    }
+
+    if (kind === 'buku') {
+      const kode = str(r.kode), judul = str(r.judul), kategori = str(r.kategori);
+      label = `${kode} · ${judul}`;
+      if (!kode) errors.push('Kode buku wajib diisi');
+      if (!judul) errors.push('Judul wajib diisi');
+      const CATS = ['Fiksi', 'Nonfiksi', 'Buku Pelajaran', 'Referensi', 'Majalah', 'Buku Anak'];
+      const cat = CATS.find((c) => c.toLowerCase() === kategori.toLowerCase());
+      if (!cat) errors.push(`Kategori harus salah satu: ${CATS.join(', ')}`);
+      const copies = Number(str(r.jumlah_eksemplar));
+      if (!Number.isInteger(copies) || copies < 1) errors.push('Jumlah eksemplar harus bilangan bulat ≥ 1');
+      const year = str(r.tahun) ? Number(str(r.tahun)) : null;
+      if (year !== null && (!Number.isInteger(year) || year < 1000 || year > 2100)) errors.push('Tahun terbit tidak valid');
+      const unitStr = str(r.unit);
+      const unit = unitStr ? unitByCode(unitStr) : null;
+      if (unitStr && !unit) errors.push(`Unit "${unitStr}" tidak dikenal`);
+      if (seen.has(kode.toLowerCase())) errors.push('Kode buku duplikat di dalam file');
+      seen.add(kode.toLowerCase());
+      const existing = d.books.find((b) => b.code.toLowerCase() === kode.toLowerCase());
+      if (existing) {
+        status = 'perbarui';
+        const onLoan = d.book_loans.filter((l) => l.book_id === existing.id && !l.returned_at).length;
+        if (copies < onLoan) errors.push(`Jumlah eksemplar tidak boleh kurang dari yang sedang dipinjam (${onLoan})`);
+      }
+      if (!errors.length && apply) {
+        const data = { code: kode, title: judul, author: str(r.pengarang), publisher: str(r.penerbit), year, isbn: str(r.isbn), category: cat as Book['category'], unit_id: unit?.id ?? null, location: str(r.lokasi_rak), copies, description: str(r.deskripsi) };
+        if (existing) patch('books', existing.id, data);
+        else insert('books', { ...data, cover_url: '', created_at: new Date().toISOString() });
       }
     }
 

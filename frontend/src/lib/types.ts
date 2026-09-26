@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'kepsek' | 'keuangan' | 'kesiswaan' | 'guru' | 'siswa' | 'ortu';
+export type Role = 'admin' | 'kepsek' | 'keuangan' | 'kesiswaan' | 'pustakawan' | 'guru' | 'siswa' | 'ortu';
 export type UnitCode = 'SD' | 'SMP' | 'SMA' | 'SMK';
 
 export interface Settings {
@@ -12,6 +12,9 @@ export interface Settings {
   vision: string;
   mission: string;
   ppdb_open: boolean;
+  library_loan_days: number;
+  library_max_loans: number;
+  library_fine_per_day: number;
 }
 
 export interface Unit {
@@ -480,6 +483,50 @@ export interface TeachingJournal {
   created_at: string;
 }
 
+export type BookCategory = 'Fiksi' | 'Nonfiksi' | 'Buku Pelajaran' | 'Referensi' | 'Majalah' | 'Buku Anak';
+
+export interface Book {
+  id: number;
+  unit_id: number | null;
+  code: string;
+  isbn: string;
+  title: string;
+  author: string;
+  publisher: string;
+  year: number | null;
+  category: BookCategory;
+  location: string;
+  copies: number;
+  cover_url: string;
+  description: string;
+  created_at: string;
+}
+
+export interface BookLoan {
+  id: number;
+  book_id: number;
+  student_id: number | null;
+  employee_id: number | null;
+  borrowed_at: string;
+  due_date: string;
+  returned_at: string | null;
+  extended: boolean;
+  fine: number;
+  fine_paid: boolean;
+  processed_by: string;
+  notes: string;
+}
+
+export interface BookReservation {
+  id: number;
+  book_id: number;
+  student_id: number | null;
+  employee_id: number | null;
+  user_id: number;
+  status: 'menunggu' | 'dipinjam' | 'batal';
+  created_at: string;
+}
+
 export interface DB {
   settings: Settings[];
   units: Unit[];
@@ -517,6 +564,9 @@ export interface DB {
   expenses: Expense[];
   leave_requests: LeaveRequest[];
   teaching_journals: TeachingJournal[];
+  books: Book[];
+  book_loans: BookLoan[];
+  book_reservations: BookReservation[];
 }
 
 export type Resource = keyof DB;

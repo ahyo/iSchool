@@ -2,7 +2,7 @@ import type {
   DB, Unit, Employee, Subject, SchoolClass, Student, Guardian, Schedule, StudentAttendance,
   EmployeeAttendance, Grade, FeeType, Bill, Payment, Applicant, Announcement, EventItem,
   StudentRecord, Material, Assignment, Submission, Exam, ExamResult, Question, Major, User,
-  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal,
+  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal, Book, BookLoan, BookReservation,
 } from '../types';
 import { addDays, isWeekend, today, pad, computeFinal } from '../utils';
 
@@ -791,19 +791,103 @@ export function buildSeed(): DB {
     }
   }
 
+  // ---------- Perpustakaan ----------
+  const librarian = addEmp({ name: 'Dewi Sartika, S.IP.', gender: 'P', unit_id: null, type: 'tendik', position: 'Kepala Perpustakaan', status: 'PTY', education: 'S1', supervisor_id: ketua.id });
+  const BOOKS: [Book['category'], string, string, string, number | null, number, number | null][] = [
+    // kategori, judul, pengarang, penerbit, tahun, eksemplar, unit
+    ['Fiksi', 'Laskar Pelangi', 'Andrea Hirata', 'Bentang Pustaka', 2005, 5, null],
+    ['Fiksi', 'Sang Pemimpi', 'Andrea Hirata', 'Bentang Pustaka', 2006, 3, null],
+    ['Fiksi', 'Bumi Manusia', 'Pramoedya Ananta Toer', 'Hasta Mitra', 1980, 3, null],
+    ['Fiksi', 'Negeri 5 Menara', 'Ahmad Fuadi', 'Gramedia Pustaka Utama', 2009, 4, null],
+    ['Fiksi', 'Ronggeng Dukuh Paruk', 'Ahmad Tohari', 'Gramedia Pustaka Utama', 1982, 2, null],
+    ['Fiksi', 'Bumi', 'Tere Liye', 'Gramedia Pustaka Utama', 2014, 4, null],
+    ['Fiksi', 'Hujan', 'Tere Liye', 'Gramedia Pustaka Utama', 2016, 3, null],
+    ['Fiksi', 'Laut Bercerita', 'Leila S. Chudori', 'Kepustakaan Populer Gramedia', 2017, 3, null],
+    ['Fiksi', 'Ayat-Ayat Cinta', 'Habiburrahman El Shirazy', 'Republika', 2004, 2, null],
+    ['Fiksi', 'Dilan: Dia adalah Dilanku Tahun 1990', 'Pidi Baiq', 'Pastel Books', 2014, 3, null],
+    ['Nonfiksi', 'Filosofi Teras', 'Henry Manampiring', 'Penerbit Buku Kompas', 2018, 3, null],
+    ['Nonfiksi', 'Atomic Habits (terjemahan)', 'James Clear', 'Gramedia Pustaka Utama', 2019, 3, null],
+    ['Nonfiksi', 'Sapiens: Riwayat Singkat Umat Manusia (terjemahan)', 'Yuval Noah Harari', 'Kepustakaan Populer Gramedia', 2017, 2, null],
+    ['Nonfiksi', 'Sejarah Indonesia Modern 1200–2008 (terjemahan)', 'M.C. Ricklefs', 'Serambi', 2008, 2, null],
+    ['Referensi', 'Kamus Besar Bahasa Indonesia', 'Badan Pengembangan dan Pembinaan Bahasa', 'Balai Pustaka', null, 4, null],
+    ['Referensi', 'Atlas Indonesia dan Dunia', 'Tim Penyusun', '-', null, 6, null],
+    ['Referensi', 'Ensiklopedia Sains untuk Pelajar', 'Tim Penyusun', '-', null, 2, null],
+    ['Majalah', 'Majalah Bobo (bundel semester)', 'Redaksi Bobo', 'Kompas Gramedia', null, 4, 1],
+    ['Buku Anak', 'Kumpulan Dongeng Nusantara', 'Tim Penyusun', '-', null, 5, 1],
+    ['Buku Anak', 'Si Kancil dan Buaya', 'Cerita Rakyat', '-', null, 4, 1],
+    ['Buku Pelajaran', 'Buku Siswa Bahasa Indonesia Kelas III SD (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 12, 1],
+    ['Buku Pelajaran', 'Buku Siswa IPAS Kelas V SD (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 12, 1],
+    ['Buku Pelajaran', 'Buku Siswa Informatika Kelas VII SMP (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2021, 15, 2],
+    ['Buku Pelajaran', 'Buku Siswa IPA Kelas VIII SMP (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 15, 2],
+    ['Buku Pelajaran', 'Buku Siswa Matematika Kelas XI SMA (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 20, 3],
+    ['Buku Pelajaran', 'Buku Siswa Fisika Kelas XI SMA (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 16, 3],
+    ['Buku Pelajaran', 'Buku Siswa Bahasa Inggris Kelas X SMA/SMK (Kurikulum Merdeka)', 'Kemendikbudristek', 'Pusat Perbukuan', 2021, 20, null],
+    ['Buku Pelajaran', 'Dasar-dasar Teknik Jaringan Komputer dan Telekomunikasi Kelas X SMK', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 12, 4],
+    ['Buku Pelajaran', 'Dasar-dasar Akuntansi dan Keuangan Lembaga Kelas X SMK', 'Kemendikbudristek', 'Pusat Perbukuan', 2022, 12, 4],
+  ];
+  const PREFIX: Record<string, string> = { Fiksi: 'FIK', Nonfiksi: 'NON', 'Buku Pelajaran': 'PEL', Referensi: 'REF', Majalah: 'MAJ', 'Buku Anak': 'ANK' };
+  const counters: Record<string, number> = {};
+  const books: Book[] = BOOKS.map(([category, title, author, publisher, year, copies, unit_id], i) => {
+    counters[category] = (counters[category] || 0) + 1;
+    return {
+      id: i + 1, unit_id, code: `${PREFIX[category]}-${pad(counters[category], 3)}`, isbn: '', title, author, publisher, year, category,
+      location: `Rak ${String.fromCharCode(65 + (i % 6))}${(i % 4) + 1}`, copies, cover_url: '',
+      description: category === 'Buku Pelajaran' ? 'Buku teks utama untuk kegiatan belajar di kelas.' : '', created_at: '2026-07-01T08:00:00',
+    };
+  });
+  const book_loans: BookLoan[] = [];
+  const book_reservations: BookReservation[] = [];
+  const onLoan = new Map<number, number>();
+  let blid = 0;
+  const addLoan = (book: Book, who: { student_id?: number; employee_id?: number }, borrowed: string, returnedOffset: number | null) => {
+    const active = returnedOffset === null;
+    if (active && (onLoan.get(book.id) || 0) >= book.copies) return;
+    const due = addDays(borrowed, 7);
+    const returned = active ? null : addDays(due, returnedOffset!);
+    const lateDays = returned && returned > due ? Math.round((new Date(returned).getTime() - new Date(due).getTime()) / 86400000) : 0;
+    book_loans.push({ id: ++blid, book_id: book.id, student_id: who.student_id ?? null, employee_id: who.employee_id ?? null, borrowed_at: borrowed, due_date: due, returned_at: returned && returned <= TODAY ? returned : active ? null : TODAY, extended: false, fine: lateDays * 500, fine_paid: lateDays ? rand() < 0.8 : false, processed_by: librarian.name, notes: '' });
+    if (active) onLoan.set(book.id, (onLoan.get(book.id) || 0) + 1);
+  };
+  const leisure = books.filter((b) => b.category !== 'Buku Pelajaran');
+  for (let i = 0; i < 140; i++) {
+    const borrowed = addDays(TODAY, -int(2, 60));
+    const byStudent = rand() < 0.85;
+    const st = pick(activeStudents);
+    const pool = byStudent ? leisure.filter((b) => !b.unit_id || b.unit_id === st.unit_id) : books;
+    const book = pick(pool);
+    const who = byStudent ? { student_id: st.id } : { employee_id: pick(employees.filter((e) => e.type === 'guru')).id };
+    const due = addDays(borrowed, 7);
+    const active = due >= addDays(TODAY, -6) && rand() < 0.35;
+    addLoan(book, who, borrowed, active ? null : int(-5, rand() < 0.2 ? 6 : 0));
+  }
+  // Pinjaman akun demo
+  const bk = (t: string) => books.find((b) => b.title === t)!;
+  addLoan(bk('Laskar Pelangi'), { student_id: demoStudent.id }, addDays(TODAY, -5), null);
+  addLoan(bk('Filosofi Teras'), { student_id: demoStudent.id }, addDays(TODAY, -30), -2);
+  addLoan(bk('Negeri 5 Menara'), { student_id: demoStudent.id }, addDays(TODAY, -45), 2);
+  addLoan(bk('Kumpulan Dongeng Nusantara'), { student_id: sibling.id }, addDays(TODAY, -10), null); // terlambat
+  addLoan(bk('Sapiens: Riwayat Singkat Umat Manusia (terjemahan)'), { employee_id: unitTeachers[3][0].id }, addDays(TODAY, -3), null);
+  book_loans.sort((a, b) => a.borrowed_at.localeCompare(b.borrowed_at)).forEach((l, i) => (l.id = i + 1));
+  users.push({ id: 8, username: 'pustakawan', password: DEMO_PASSWORD, name: librarian.name, role: 'pustakawan', employee_id: librarian.id, student_id: null, guardian_id: null, is_active: true });
+  book_reservations.push(
+    { id: 1, book_id: bk('Bumi').id, student_id: demoStudent.id, employee_id: null, user_id: 6, status: 'menunggu', created_at: `${addDays(TODAY, -1)}T19:30:00` },
+    { id: 2, book_id: bk('Laut Bercerita').id, student_id: pick(activeStudents.filter((x) => x.unit_id >= 3)).id, employee_id: null, user_id: 0, status: 'menunggu', created_at: `${TODAY}T07:10:00` },
+    { id: 3, book_id: bk('Hujan').id, student_id: pick(activeStudents).id, employee_id: null, user_id: 0, status: 'dipinjam', created_at: `${addDays(TODAY, -12)}T10:00:00` },
+  );
+
   return {
     settings: [{
       id: 1, name: 'Yayasan Pendidikan Nusantara Cendekia', foundation: 'Yayasan Nusantara Cendekia', address: 'Jl. Pendidikan No. 1-5, Kebayoran Baru, Jakarta Selatan 12110',
       phone: '(021) 555-0123', email: 'info@nusantaracendekia.sch.id', website: 'www.nusantaracendekia.sch.id',
       vision: 'Menjadi lembaga pendidikan unggul yang melahirkan generasi berakhlak mulia, cerdas, kreatif, dan berdaya saing global.',
       mission: 'Menyelenggarakan pembelajaran berpusat pada siswa\nMenanamkan nilai karakter dan Profil Pelajar Pancasila\nMengembangkan literasi, numerasi, dan teknologi\nMembangun kemitraan dengan orang tua, masyarakat, dan dunia industri',
-      ppdb_open: true,
+      ppdb_open: true, library_loan_days: 7, library_max_loans: 3, library_fine_per_day: 500,
     }],
     units, academic_years, users, employees, majors, subjects, classes, guardians, students, schedules,
     student_attendance, employee_attendance, materials, assignments, submissions, exams, exam_results, grades,
     fee_types, bills, payments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
     lessons, lesson_progress, virtual_classes, discussions, enrollments,
-    expenses, leave_requests, teaching_journals,
+    expenses, leave_requests, teaching_journals, books, book_loans, book_reservations,
   };
 }
 

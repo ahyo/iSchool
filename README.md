@@ -20,6 +20,7 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 | `kesiswaan` | Bagian Kesiswaan | Verifikasi PPDB → daftar ulang, mutasi, prestasi/pelanggaran |
 | `guru` | Guru (wali kelas XI MIPA) | Presensi mandiri & kelas, e-learning (buat pelajaran, kelas virtual, progres), tugas, ujian CBT, nilai, rapor |
 | `siswa` | Siswa XI MIPA | Belajar di E-Learning (kuis, kelas virtual hari ini, diskusi), CBT hari ini, tugas, tagihan, rapor |
+| `pustakawan` | Pustakawan | Catat peminjaman & pengembalian (denda otomatis), proses reservasi, kelola katalog, laporan |
 | `ortu` | Orang tua (2 anak: SMA & SMP) | Pantau nilai, kehadiran, tugas, dan bayar tagihan tiap anak |
 
 ## Fitur per modul
@@ -34,6 +35,7 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 | Pembelajaran | Materi pelajaran, tugas (pengumpulan, penilaian, umpan balik), ujian & CBT pilihan ganda dengan timer dan penilaian otomatis |
 | E-Learning | Kelas online per mapel-kelas: modul & pelajaran bertahap (bacaan, video YouTube/Vimeo/Drive/MP4, dokumen, kuis dengan nilai otomatis & bisa diulang), draf/publikasi, pelacakan progres per siswa (+ ekspor CSV), kelas virtual (Jitsi/Meet/Zoom/Teams) dengan pencatatan kehadiran & rekaman, forum diskusi (topik, balasan, sematkan, moderasi), dipantau orang tua |
 | Nilai & rapor | Input nilai (tugas, harian, PTS, PAS → nilai akhir berbobot), leger kelas + ranking, rapor siap cetak untuk semester mana pun |
+| Perpustakaan | Peran Pustakawan: katalog (sampul, eksemplar, lokasi rak, stok tersedia), sirkulasi pinjam–kembali–perpanjang, denda keterlambatan otomatis, aturan pinjam (lama, batas, blokir bila terlambat/berdenda), reservasi online oleh siswa/guru, "Pinjaman Saya" untuk siswa/guru/orang tua, laporan (buku terpopuler, pembaca teraktif), impor katalog dari Excel |
 | Impor data | Impor massal dari Excel/CSV: siswa (+ akun siswa & orang tua otomatis), guru & pegawai, riwayat kelas, dan nilai rapor lama; template Excel dengan petunjuk & referensi kode, pratinjau validasi per baris, upsert (impor ulang = perbarui), unduh daftar error |
 | Izin & sakit online | Orang tua/siswa mengajukan izin atau sakit, wali kelas menyetujui/menolak; presensi otomatis terisi saat disetujui |
 | Jurnal mengajar | Guru mengisi materi & kegiatan per sesi (terisi otomatis dari jadwal & presensi), kepala sekolah memantau keterisian per guru |

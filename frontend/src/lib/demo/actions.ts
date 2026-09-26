@@ -4,6 +4,7 @@ import type { Applicant, Bill, Payment, Promotion, Student, AttendanceStatus, Em
 import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
 import { runImport } from './importer';
+import { availableCopies, lateDays, LIB_STAFF } from '../library';
 import type { ImportKind } from '../importSpec';
 import { computeFinal, nowISO, nowTime, pad, today, addDays, isWeekend } from '../utils';
 
@@ -338,7 +339,7 @@ export const actions: Record<string, Handler> = {
   },
 
   'import.run': (p: { kind: ImportKind; rows: Record<string, unknown>[]; dry_run?: boolean }, user) => {
-    const allowed: Record<ImportKind, string[]> = { siswa: ['admin', 'kesiswaan'], pegawai: ['admin'], riwayat_kelas: ['admin', 'kesiswaan'], nilai: ['admin', 'kesiswaan'] };
+    const allowed: Record<ImportKind, string[]> = { siswa: ['admin', 'kesiswaan'], pegawai: ['admin'], riwayat_kelas: ['admin', 'kesiswaan'], nilai: ['admin', 'kesiswaan'], buku: ['admin', 'pustakawan'] };
     if (!user || !allowed[p.kind]?.includes(user.role)) throw new Error('Anda tidak memiliki akses untuk impor data ini');
     if (!Array.isArray(p.rows) || !p.rows.length) throw new Error('File tidak berisi data');
     if (p.rows.length > 20000) throw new Error('Maksimal 20.000 baris per impor');
@@ -400,6 +401,104 @@ export const actions: Record<string, Handler> = {
     }
     commit();
     return { ok: true, days };
+  },
+
+  // ---------------- Perpustakaan ----------------
+  'library.borrow': (p: { book_id: number; student_id?: number | null; employee_id?: number | null; reservation_id?: number; notes?: string }, user) => {
+    if (!user || !LIB_STAFF.includes(user.role)) throw new Error('Hanya pustakawan yang dapat mencatat peminjaman');
+    const d = getDB();
+    const cfg = d.settings[0];
+    const book = d.books.find((b) => b.id === Number(p.book_id));
+    if (!book) throw new Error('Buku tidak ditemukan');
+    if (availableCopies(book, d.book_loans) <= 0) throw new Error(`Semua eksemplar "${book.title}" sedang dipinjam`);
+    const sid = p.student_id ? Number(p.student_id) : null;
+    const eid = p.employee_id ? Number(p.employee_id) : null;
+    if (!!sid === !!eid) throw new Error('Pilih satu peminjam (siswa atau pegawai)');
+    if (sid && d.students.find((x) => x.id === sid)?.status !== 'aktif') throw new Error('Siswa tidak aktif');
+    if (eid && !d.employees.find((x) => x.id === eid)?.is_active) throw new Error('Pegawai tidak aktif');
+    const mine = d.book_loans.filter((l) => (sid ? l.student_id === sid : l.employee_id === eid));
+    const active = mine.filter((l) => !l.returned_at);
+    if (active.length >= cfg.library_max_loans) throw new Error(`Batas peminjaman ${cfg.library_max_loans} buku sudah tercapai`);
+    if (active.some((l) => l.due_date < today())) throw new Error('Peminjam masih memiliki buku yang terlambat dikembalikan');
+    if (mine.some((l) => l.fine > 0 && !l.fine_paid)) throw new Error('Peminjam masih memiliki denda yang belum dibayar');
+    if (active.some((l) => l.book_id === book.id)) throw new Error('Peminjam sedang meminjam buku yang sama');
+    const loan = insert('book_loans', { book_id: book.id, student_id: sid, employee_id: eid, borrowed_at: today(), due_date: addDays(today(), cfg.library_loan_days), returned_at: null, extended: false, fine: 0, fine_paid: false, processed_by: user.name, notes: p.notes || '' });
+    const resv = d.book_reservations.find((r) => r.id === Number(p.reservation_id)) || d.book_reservations.find((r) => r.book_id === book.id && r.status === 'menunggu' && (sid ? r.student_id === sid : r.employee_id === eid));
+    if (resv) patch('book_reservations', resv.id, { status: 'dipinjam' });
+    commit();
+    return loan;
+  },
+
+  'library.return': (p: { loan_id: number; pay_fine?: boolean }, user) => {
+    if (!user || !LIB_STAFF.includes(user.role)) throw new Error('Hanya pustakawan yang dapat mencatat pengembalian');
+    const d = getDB();
+    const loan = d.book_loans.find((l) => l.id === Number(p.loan_id));
+    if (!loan) throw new Error('Peminjaman tidak ditemukan');
+    if (loan.returned_at) throw new Error('Buku sudah dikembalikan');
+    const fine = lateDays(loan) * d.settings[0].library_fine_per_day;
+    const row = patch('book_loans', loan.id, { returned_at: today(), fine, fine_paid: fine === 0 || !!p.pay_fine });
+    commit();
+    return { ...row, late_days: lateDays(loan) };
+  },
+
+  'library.extend': (p: { loan_id: number }, user) => {
+    const d = getDB();
+    const loan = d.book_loans.find((l) => l.id === Number(p.loan_id));
+    if (!loan) throw new Error('Peminjaman tidak ditemukan');
+    const own = (user?.role === 'siswa' && loan.student_id === user.student_id) || (user?.role === 'guru' && loan.employee_id === user.employee_id);
+    if (!user || !(own || LIB_STAFF.includes(user.role))) throw new Error('Anda tidak dapat memperpanjang peminjaman ini');
+    if (loan.returned_at) throw new Error('Buku sudah dikembalikan');
+    if (loan.extended) throw new Error('Peminjaman hanya dapat diperpanjang satu kali');
+    if (loan.due_date < today()) throw new Error('Peminjaman sudah terlambat; kembalikan buku ke perpustakaan');
+    if (d.book_reservations.some((r) => r.book_id === loan.book_id && r.status === 'menunggu')) throw new Error('Buku sedang direservasi peminjam lain');
+    const row = patch('book_loans', loan.id, { due_date: addDays(loan.due_date, d.settings[0].library_loan_days), extended: true });
+    commit();
+    return row;
+  },
+
+  'library.payFine': (p: { loan_id: number }, user) => {
+    if (!user || !LIB_STAFF.includes(user.role)) throw new Error('Hanya pustakawan yang dapat mencatat pembayaran denda');
+    const loan = getDB().book_loans.find((l) => l.id === Number(p.loan_id));
+    if (!loan || !loan.fine) throw new Error('Tidak ada denda');
+    const row = patch('book_loans', loan.id, { fine_paid: true });
+    commit();
+    return row;
+  },
+
+  'library.reserve': (p: { book_id: number }, user) => {
+    const d = getDB();
+    const sid = user?.role === 'siswa' ? user.student_id : null;
+    const eid = user?.role === 'guru' ? user.employee_id : null;
+    if (!sid && !eid) throw new Error('Reservasi hanya untuk siswa dan guru');
+    const book = d.books.find((b) => b.id === Number(p.book_id));
+    if (!book) throw new Error('Buku tidak ditemukan');
+    const mine = d.book_reservations.filter((r) => r.status === 'menunggu' && (sid ? r.student_id === sid : r.employee_id === eid));
+    if (mine.some((r) => r.book_id === book.id)) throw new Error('Anda sudah mereservasi buku ini');
+    if (mine.length >= 3) throw new Error('Maksimal 3 reservasi aktif');
+    if (d.book_loans.some((l) => !l.returned_at && l.book_id === book.id && (sid ? l.student_id === sid : l.employee_id === eid))) throw new Error('Anda sedang meminjam buku ini');
+    const row = insert('book_reservations', { book_id: book.id, student_id: sid, employee_id: eid, user_id: user!.id, status: 'menunggu', created_at: nowISO() });
+    commit();
+    return row;
+  },
+
+  'library.cancelReservation': (p: { id: number }, user) => {
+    const r = getDB().book_reservations.find((x) => x.id === Number(p.id));
+    if (!r) throw new Error('Reservasi tidak ditemukan');
+    const own = (user?.role === 'siswa' && r.student_id === user.student_id) || (user?.role === 'guru' && r.employee_id === user.employee_id);
+    if (!user || !(own || LIB_STAFF.includes(user.role))) throw new Error('Anda tidak dapat membatalkan reservasi ini');
+    if (r.status !== 'menunggu') throw new Error('Reservasi sudah diproses');
+    const row = patch('book_reservations', r.id, { status: 'batal' });
+    commit();
+    return row;
+  },
+
+  'library.settings': (p: { library_loan_days: number; library_max_loans: number; library_fine_per_day: number }, user) => {
+    if (!user || !LIB_STAFF.includes(user.role)) throw new Error('Hanya pustakawan yang dapat mengubah pengaturan');
+    const days = Number(p.library_loan_days), max = Number(p.library_max_loans), fine = Number(p.library_fine_per_day);
+    if (!(days >= 1 && days <= 60) || !(max >= 1 && max <= 20) || !(fine >= 0)) throw new Error('Nilai pengaturan tidak valid');
+    const row = patch('settings', getDB().settings[0].id, { library_loan_days: days, library_max_loans: max, library_fine_per_day: fine });
+    commit();
+    return row;
   },
 
   'academic_years.activate': (p: { id: number }) => {

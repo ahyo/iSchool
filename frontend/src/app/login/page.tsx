@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { GraduationCap, ShieldCheck, Crown, Wallet, Users, Presentation, BookOpenCheck, Heart, ArrowLeft } from 'lucide-react';
+import { GraduationCap, ShieldCheck, Crown, Wallet, Users, Presentation, BookOpenCheck, Heart, ArrowLeft, Library } from 'lucide-react';
 import { useAuth, ROLE_LABEL } from '@/lib/auth';
 import { IS_DEMO } from '@/lib/api';
 import { Button, Field, Input } from '@/components/ui';
@@ -13,6 +13,7 @@ const DEMO: { role: Role; username: string; icon: React.ElementType; desc: strin
   { role: 'kepsek', username: 'kepsek', icon: Crown, desc: 'Monitoring & persetujuan' },
   { role: 'keuangan', username: 'keuangan', icon: Wallet, desc: 'Tagihan, pembayaran, laporan' },
   { role: 'kesiswaan', username: 'kesiswaan', icon: Users, desc: 'PPDB, siswa, kedisiplinan' },
+  { role: 'pustakawan', username: 'pustakawan', icon: Library, desc: 'Katalog, sirkulasi, denda' },
   { role: 'guru', username: 'guru', icon: Presentation, desc: 'Presensi, materi, tugas, nilai' },
   { role: 'siswa', username: 'siswa', icon: BookOpenCheck, desc: 'Belajar, ujian CBT, tagihan' },
   { role: 'ortu', username: 'ortu', icon: Heart, desc: 'Pantau 2 anak (SMA & SMP)' },

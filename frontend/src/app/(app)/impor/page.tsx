@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, GraduationCap, History, RotateCcw, Upload, Users, UserSquare2 } from 'lucide-react';
+import { AlertTriangle, BookOpen, CheckCircle2, Download, FileSpreadsheet, GraduationCap, History, RotateCcw, Upload, Users, UserSquare2 } from 'lucide-react';
 import { api, useData } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Badge, Button, Card, Loading, PageHeader, StatCard, Tabs, toast } from '@/components/ui';
@@ -12,6 +12,7 @@ const KINDS: { kind: ImportKind; icon: React.ElementType; roles: string[] }[] = 
   { kind: 'pegawai', icon: UserSquare2, roles: ['admin'] },
   { kind: 'riwayat_kelas', icon: History, roles: ['admin', 'kesiswaan'] },
   { kind: 'nilai', icon: GraduationCap, roles: ['admin', 'kesiswaan'] },
+  { kind: 'buku', icon: BookOpen, roles: ['admin', 'pustakawan'] },
 ];
 
 type Rows = Record<string, unknown>[];
@@ -19,7 +20,7 @@ type Rows = Record<string, unknown>[];
 export default function ImporPage() {
   const { user } = useAuth();
   const { data } = useData(['units', 'classes', 'subjects']);
-  const [kind, setKind] = useState<ImportKind>('siswa');
+  const [kind, setKind] = useState<ImportKind>(user?.role === 'pustakawan' ? 'buku' : 'siswa');
   const [fileName, setFileName] = useState('');
   const [rows, setRows] = useState<Rows | null>(null);
   const [check, setCheck] = useState<ImportResult | null>(null);
@@ -94,7 +95,7 @@ export default function ImporPage() {
   return (
     <>
       <PageHeader title="Impor Data" subtitle="Impor siswa, pegawai, riwayat kelas, dan nilai rapor lama dari Excel (.xlsx) atau CSV" />
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         {kinds.map((k) => (
           <button key={k.kind} onClick={() => { setKind(k.kind); reset(); }} className={cn('flex items-start gap-3 rounded-xl border-2 bg-white p-4 text-left transition', kind === k.kind ? 'border-brand-500 bg-brand-50' : 'border-slate-200 hover:border-slate-300')}>
             <k.icon className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />

@@ -14,7 +14,7 @@ from ..database import get_db
 from ..deps import Principal, bearer, ensure_role, get_principal
 from ..models import (
     AcademicYear, Announcement, Applicant, Bill, Employee, EmployeeAttendance, Event, Exam, ExamResult,
-    Discussion, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
+    Book, BookLoan, BookReservation, Discussion, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
     Setting, Student, StudentAttendance, Submission, Unit, User, VirtualClass,
 )
 from ..importer import run_import
@@ -523,7 +523,7 @@ def discussions_pin(db: Session, p: dict, user: Principal):
 
 
 # ------------------------------------------------------------------ impor, akun, izin
-IMPORT_ROLES = {"siswa": ("admin", "kesiswaan"), "pegawai": ("admin",), "riwayat_kelas": ("admin", "kesiswaan"), "nilai": ("admin", "kesiswaan")}
+IMPORT_ROLES = {"siswa": ("admin", "kesiswaan"), "pegawai": ("admin",), "riwayat_kelas": ("admin", "kesiswaan"), "nilai": ("admin", "kesiswaan"), "buku": ("admin", "pustakawan")}
 
 
 def import_run(db: Session, p: dict, user: Principal):
@@ -613,6 +613,165 @@ def leave_review(db: Session, p: dict, user: Principal):
     return {"ok": True, "days": days}
 
 
+# ------------------------------------------------------------------ perpustakaan
+LIB_STAFF = ("admin", "pustakawan")
+
+
+def _settings(db: Session) -> Setting:
+    return db.scalars(select(Setting)).first()
+
+
+def _available(db: Session, book: Book) -> int:
+    active = db.scalar(select(func.count(BookLoan.id)).where(BookLoan.book_id == book.id, BookLoan.returned_at.is_(None))) or 0
+    return book.copies - active
+
+
+def _late_days(loan: BookLoan) -> int:
+    return max(0, ((loan.returned_at or today()) - loan.due_date).days)
+
+
+def library_borrow(db: Session, p: dict, user: Principal):
+    ensure_role(user, *LIB_STAFF)
+    cfg = _settings(db)
+    book = db.get(Book, int(p.get("book_id") or 0))
+    if not book:
+        raise HTTPException(404, "Buku tidak ditemukan")
+    if _available(db, book) <= 0:
+        raise HTTPException(400, f'Semua eksemplar "{book.title}" sedang dipinjam')
+    sid = int(p["student_id"]) if p.get("student_id") else None
+    eid = int(p["employee_id"]) if p.get("employee_id") else None
+    if bool(sid) == bool(eid):
+        raise HTTPException(422, "Pilih satu peminjam (siswa atau pegawai)")
+    if sid:
+        st = db.get(Student, sid)
+        if not st or st.status != "aktif":
+            raise HTTPException(400, "Siswa tidak aktif")
+        cond = BookLoan.student_id == sid
+    else:
+        emp = db.get(Employee, eid)
+        if not emp or not emp.is_active:
+            raise HTTPException(400, "Pegawai tidak aktif")
+        cond = BookLoan.employee_id == eid
+    mine = list(db.scalars(select(BookLoan).where(cond)))
+    active = [l for l in mine if l.returned_at is None]
+    if len(active) >= cfg.library_max_loans:
+        raise HTTPException(400, f"Batas peminjaman {cfg.library_max_loans} buku sudah tercapai")
+    if any(l.due_date < today() for l in active):
+        raise HTTPException(400, "Peminjam masih memiliki buku yang terlambat dikembalikan")
+    if any(l.fine > 0 and not l.fine_paid for l in mine):
+        raise HTTPException(400, "Peminjam masih memiliki denda yang belum dibayar")
+    if any(l.book_id == book.id for l in active):
+        raise HTTPException(400, "Peminjam sedang meminjam buku yang sama")
+    loan = BookLoan(book_id=book.id, student_id=sid, employee_id=eid, borrowed_at=today(), due_date=today() + dt.timedelta(days=cfg.library_loan_days),
+                    returned_at=None, extended=False, fine=0, fine_paid=False, processed_by=user.user.name, notes=p.get("notes") or "")
+    db.add(loan)
+    resv = db.get(BookReservation, int(p["reservation_id"])) if p.get("reservation_id") else None
+    if not resv:
+        owner = (BookReservation.student_id == sid) if sid else (BookReservation.employee_id == eid)
+        resv = db.scalars(select(BookReservation).where(BookReservation.book_id == book.id, BookReservation.status == "menunggu", owner)).first()
+    if resv:
+        resv.status = "dipinjam"
+    db.commit()
+    return to_dict(loan)
+
+
+def library_return(db: Session, p: dict, user: Principal):
+    ensure_role(user, *LIB_STAFF)
+    loan = db.get(BookLoan, int(p.get("loan_id") or 0))
+    if not loan:
+        raise HTTPException(404, "Peminjaman tidak ditemukan")
+    if loan.returned_at:
+        raise HTTPException(400, "Buku sudah dikembalikan")
+    days = _late_days(loan)
+    loan.returned_at = today()
+    loan.fine = days * _settings(db).library_fine_per_day
+    loan.fine_paid = loan.fine == 0 or bool(p.get("pay_fine"))
+    db.commit()
+    return {**to_dict(loan), "late_days": days}
+
+
+def library_extend(db: Session, p: dict, user: Principal):
+    loan = db.get(BookLoan, int(p.get("loan_id") or 0))
+    if not loan:
+        raise HTTPException(404, "Peminjaman tidak ditemukan")
+    own = (user.role == "siswa" and loan.student_id in user.student_ids) or (user.role == "guru" and loan.employee_id == user.user.employee_id)
+    if not (own or user.role in LIB_STAFF):
+        raise HTTPException(403, "Anda tidak dapat memperpanjang peminjaman ini")
+    if loan.returned_at:
+        raise HTTPException(400, "Buku sudah dikembalikan")
+    if loan.extended:
+        raise HTTPException(400, "Peminjaman hanya dapat diperpanjang satu kali")
+    if loan.due_date < today():
+        raise HTTPException(400, "Peminjaman sudah terlambat; kembalikan buku ke perpustakaan")
+    if db.scalars(select(BookReservation).where(BookReservation.book_id == loan.book_id, BookReservation.status == "menunggu")).first():
+        raise HTTPException(400, "Buku sedang direservasi peminjam lain")
+    loan.due_date += dt.timedelta(days=_settings(db).library_loan_days)
+    loan.extended = True
+    db.commit()
+    return to_dict(loan)
+
+
+def library_pay_fine(db: Session, p: dict, user: Principal):
+    ensure_role(user, *LIB_STAFF)
+    loan = db.get(BookLoan, int(p.get("loan_id") or 0))
+    if not loan or not loan.fine:
+        raise HTTPException(400, "Tidak ada denda")
+    loan.fine_paid = True
+    db.commit()
+    return to_dict(loan)
+
+
+def library_reserve(db: Session, p: dict, user: Principal):
+    sid = next(iter(user.student_ids), None) if user.role == "siswa" else None
+    eid = user.user.employee_id if user.role == "guru" else None
+    if not sid and not eid:
+        raise HTTPException(403, "Reservasi hanya untuk siswa dan guru")
+    book = db.get(Book, int(p.get("book_id") or 0))
+    if not book:
+        raise HTTPException(404, "Buku tidak ditemukan")
+    own_r = (BookReservation.student_id == sid) if sid else (BookReservation.employee_id == eid)
+    mine = list(db.scalars(select(BookReservation).where(BookReservation.status == "menunggu", own_r)))
+    if any(r.book_id == book.id for r in mine):
+        raise HTTPException(400, "Anda sudah mereservasi buku ini")
+    if len(mine) >= 3:
+        raise HTTPException(400, "Maksimal 3 reservasi aktif")
+    own_l = (BookLoan.student_id == sid) if sid else (BookLoan.employee_id == eid)
+    if db.scalars(select(BookLoan).where(BookLoan.book_id == book.id, BookLoan.returned_at.is_(None), own_l)).first():
+        raise HTTPException(400, "Anda sedang meminjam buku ini")
+    r = BookReservation(book_id=book.id, student_id=sid, employee_id=eid, user_id=user.user.id, status="menunggu", created_at=now())
+    db.add(r)
+    db.commit()
+    return to_dict(r)
+
+
+def library_cancel_reservation(db: Session, p: dict, user: Principal):
+    r = db.get(BookReservation, int(p.get("id") or 0))
+    if not r:
+        raise HTTPException(404, "Reservasi tidak ditemukan")
+    own = (user.role == "siswa" and r.student_id in user.student_ids) or (user.role == "guru" and r.employee_id == user.user.employee_id)
+    if not (own or user.role in LIB_STAFF):
+        raise HTTPException(403, "Anda tidak dapat membatalkan reservasi ini")
+    if r.status != "menunggu":
+        raise HTTPException(400, "Reservasi sudah diproses")
+    r.status = "batal"
+    db.commit()
+    return to_dict(r)
+
+
+def library_settings(db: Session, p: dict, user: Principal):
+    ensure_role(user, *LIB_STAFF)
+    try:
+        days, mx, fine = int(p["library_loan_days"]), int(p["library_max_loans"]), int(p["library_fine_per_day"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "Nilai pengaturan tidak valid")
+    if not (1 <= days <= 60 and 1 <= mx <= 20 and fine >= 0):
+        raise HTTPException(422, "Nilai pengaturan tidak valid")
+    cfg = _settings(db)
+    cfg.library_loan_days, cfg.library_max_loans, cfg.library_fine_per_day = days, mx, fine
+    db.commit()
+    return to_dict(cfg)
+
+
 HANDLERS = {
     "public.portal": public_portal,
     "ppdb.register": ppdb_register,
@@ -643,6 +802,13 @@ HANDLERS = {
     "leave.submit": leave_submit,
     "leave.cancel": leave_cancel,
     "leave.review": leave_review,
+    "library.borrow": library_borrow,
+    "library.return": library_return,
+    "library.extend": library_extend,
+    "library.payFine": library_pay_fine,
+    "library.reserve": library_reserve,
+    "library.cancelReservation": library_cancel_reservation,
+    "library.settings": library_settings,
 }
 
 

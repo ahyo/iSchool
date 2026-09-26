@@ -17,9 +17,10 @@ interface Notif {
 
 /** Koleksi yang dibutuhkan per peran (hanya memuat data yang relevan). */
 const KEYS: Record<Role, Resource[]> = {
-  siswa: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests'],
-  ortu: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests'],
-  guru: ['classes', 'student_attendance', 'schedules', 'teaching_journals', 'assignments', 'submissions', 'leave_requests', 'students', 'virtual_classes', 'announcements'],
+  siswa: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books'],
+  ortu: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books'],
+  pustakawan: ['book_loans', 'book_reservations', 'books', 'announcements'],
+  guru: ['book_loans', 'books', 'classes', 'student_attendance', 'schedules', 'teaching_journals', 'assignments', 'submissions', 'leave_requests', 'students', 'virtual_classes', 'announcements'],
   keuangan: ['bills', 'payments', 'announcements'],
   kesiswaan: ['applicants', 'leave_requests', 'announcements'],
   kepsek: ['applicants', 'leave_requests', 'bills', 'announcements'],
@@ -27,7 +28,7 @@ const KEYS: Record<Role, Resource[]> = {
 };
 
 const AUDIENCE: Record<Role, string[]> = {
-  admin: ['semua', 'staf', 'guru'], kepsek: ['semua', 'staf', 'guru'], keuangan: ['semua', 'staf'], kesiswaan: ['semua', 'staf'],
+  admin: ['semua', 'staf', 'guru'], kepsek: ['semua', 'staf', 'guru'], keuangan: ['semua', 'staf'], kesiswaan: ['semua', 'staf'], pustakawan: ['semua', 'staf'],
   guru: ['semua', 'guru'], siswa: ['semua', 'siswa'], ortu: ['semua', 'ortu'],
 };
 
@@ -38,6 +39,18 @@ function build(role: Role, d: Partial<DB>, ctx: { studentId?: number; classId?: 
   (d.announcements || [])
     .filter((a) => AUDIENCE[role].includes(a.audience) && a.published_at.slice(0, 10) >= recent)
     .forEach((a) => out.push({ id: `ann-${a.id}`, title: 'Pengumuman baru', desc: a.title, href: '/pengumuman/', tone: 'blue' }));
+
+  // Perpustakaan: pinjaman milik sendiri/anak yang segera jatuh tempo atau terlambat
+  const title = (id: number) => (d.books || []).find((b) => b.id === id)?.title || 'Buku';
+  const myLoans = (d.book_loans || []).filter((l) => !l.returned_at && (role === 'guru' ? l.employee_id === ctx.employeeId : (role === 'siswa' || role === 'ortu') && l.student_id === ctx.studentId));
+  myLoans.filter((l) => l.due_date < t).forEach((l) => out.push({ id: `loan-late-${l.id}-${t}`, title: 'Buku terlambat dikembalikan', desc: `${title(l.book_id)} · jatuh tempo ${fmtDate(l.due_date)}`, href: '/perpustakaan/', tone: 'red' }));
+  myLoans.filter((l) => l.due_date >= t && l.due_date <= addDays(t, 2)).forEach((l) => out.push({ id: `loan-due-${l.id}`, title: 'Batas pengembalian buku', desc: `${title(l.book_id)} · ${l.due_date === t ? 'hari ini' : fmtDate(l.due_date)}`, href: '/perpustakaan/', tone: 'amber' }));
+  if (role === 'pustakawan') {
+    const late = (d.book_loans || []).filter((l) => !l.returned_at && l.due_date < t).length;
+    if (late) out.push({ id: `lib-late-${t}-${late}`, title: `${late} peminjaman terlambat`, desc: 'Hubungi peminjam untuk pengembalian', href: '/perpustakaan/', tone: 'red' });
+    const resv = (d.book_reservations || []).filter((r) => r.status === 'menunggu').length;
+    if (resv) out.push({ id: `lib-resv-${t}-${resv}`, title: `${resv} reservasi buku menunggu`, desc: 'Siapkan buku untuk diambil peminjam', href: '/perpustakaan/', tone: 'amber' });
+  }
 
   if (role === 'siswa' || role === 'ortu') {
     const sid = ctx.studentId;

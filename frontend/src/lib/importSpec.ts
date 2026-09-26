@@ -1,5 +1,5 @@
 /** Spesifikasi kolom impor data (dipakai template Excel, validasi demo, dan dokumentasi). */
-export type ImportKind = 'siswa' | 'pegawai' | 'riwayat_kelas' | 'nilai';
+export type ImportKind = 'siswa' | 'pegawai' | 'riwayat_kelas' | 'nilai' | 'buku';
 
 export interface ImportColumn {
   key: string;
@@ -18,7 +18,7 @@ export interface ImportSpec {
   example2?: (string | number)[];
 }
 
-export const IMPORT_SPECS: Record<ImportKind, ImportSpec> = {
+const BASE_SPECS: Omit<Record<ImportKind, ImportSpec>, 'buku'> = {
   siswa: {
     kind: 'siswa',
     title: 'Data Siswa',
@@ -103,6 +103,29 @@ export const IMPORT_SPECS: Record<ImportKind, ImportSpec> = {
       { key: 'nilai_akhir', label: 'Nilai Akhir', hint: 'Opsional (0–100)', example: '' },
       { key: 'deskripsi', label: 'Deskripsi Capaian', hint: 'Opsional', example: 'Baik dalam operasi hitung.' },
     ],
+  },
+};
+
+export const IMPORT_SPECS: Record<ImportKind, ImportSpec> = {
+  ...BASE_SPECS,
+  buku: {
+  kind: 'buku',
+  title: 'Katalog Buku',
+  description: 'Koleksi perpustakaan. Kode buku menjadi kunci unik (mis. nomor induk/panggil).',
+  keyInfo: 'Baris dengan kode buku yang sudah ada akan memperbarui data buku tersebut (termasuk jumlah eksemplar).',
+  columns: [
+    { key: 'kode', label: 'Kode Buku', required: true, hint: 'Unik, mis. FIK-001 atau nomor induk', example: 'FIK-101' },
+    { key: 'judul', label: 'Judul', required: true, hint: '', example: 'Laskar Pelangi' },
+    { key: 'pengarang', label: 'Pengarang', hint: '', example: 'Andrea Hirata' },
+    { key: 'penerbit', label: 'Penerbit', hint: '', example: 'Bentang Pustaka' },
+    { key: 'tahun', label: 'Tahun Terbit', hint: 'mis. 2005', example: 2005 },
+    { key: 'isbn', label: 'ISBN', hint: 'Opsional', example: '' },
+    { key: 'kategori', label: 'Kategori', required: true, hint: 'Fiksi / Nonfiksi / Buku Pelajaran / Referensi / Majalah / Buku Anak', example: 'Fiksi' },
+    { key: 'unit', label: 'Unit', hint: 'SD / SMP / SMA / SMK (kosong = semua unit)', example: '' },
+    { key: 'lokasi_rak', label: 'Lokasi Rak', hint: '', example: 'Rak A1' },
+    { key: 'jumlah_eksemplar', label: 'Jumlah Eksemplar', required: true, hint: 'Bilangan bulat ≥ 1', example: 3 },
+    { key: 'deskripsi', label: 'Deskripsi', hint: 'Opsional', example: '' },
+  ],
   },
 };
 

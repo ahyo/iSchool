@@ -9,7 +9,7 @@ import { fmtDate, nowISO, today } from '@/lib/utils';
 import type { Announcement, EventItem, Role } from '@/lib/types';
 
 const AUDIENCE_FOR: Record<Role, Announcement['audience'][]> = {
-  admin: ['semua', 'siswa', 'ortu', 'guru', 'staf'], kepsek: ['semua', 'siswa', 'ortu', 'guru', 'staf'], keuangan: ['semua', 'staf', 'ortu'], kesiswaan: ['semua', 'staf', 'siswa', 'ortu'],
+  admin: ['semua', 'siswa', 'ortu', 'guru', 'staf'], kepsek: ['semua', 'siswa', 'ortu', 'guru', 'staf'], keuangan: ['semua', 'staf', 'ortu'], kesiswaan: ['semua', 'staf', 'siswa', 'ortu'], pustakawan: ['semua', 'staf'],
   guru: ['semua', 'guru', 'siswa'], siswa: ['semua', 'siswa'], ortu: ['semua', 'ortu'],
 };
 

@@ -25,6 +25,9 @@ class Setting(Base):
     vision: Mapped[str] = mapped_column(Text, default="")
     mission: Mapped[str] = mapped_column(Text, default="")
     ppdb_open: Mapped[bool] = mapped_column(Boolean, default=True)
+    library_loan_days: Mapped[int] = mapped_column(Integer, default=7)
+    library_max_loans: Mapped[int] = mapped_column(Integer, default=3)
+    library_fine_per_day: Mapped[int] = mapped_column(Integer, default=500)
 
 
 class Unit(Base):
@@ -517,6 +520,51 @@ class TeachingJournal(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 
+class Book(Base):
+    __tablename__ = "books"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    unit_id: Mapped[int | None] = mapped_column(FK("units.id"), nullable=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    isbn: Mapped[str] = mapped_column(String(20), default="")
+    title: Mapped[str] = mapped_column(String(250), index=True)
+    author: Mapped[str] = mapped_column(String(200), default="")
+    publisher: Mapped[str] = mapped_column(String(150), default="")
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    category: Mapped[str] = mapped_column(String(30))
+    location: Mapped[str] = mapped_column(String(50), default="")
+    copies: Mapped[int] = mapped_column(Integer, default=1)
+    cover_url: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class BookLoan(Base):
+    __tablename__ = "book_loans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), index=True)
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=True, index=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), nullable=True, index=True)
+    borrowed_at: Mapped[dt.date] = mapped_column(Date)
+    due_date: Mapped[dt.date] = mapped_column(Date)
+    returned_at: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
+    extended: Mapped[bool] = mapped_column(Boolean, default=False)
+    fine: Mapped[int] = mapped_column(Integer, default=0)
+    fine_paid: Mapped[bool] = mapped_column(Boolean, default=False)
+    processed_by: Mapped[str] = mapped_column(String(150), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class BookReservation(Base):
+    __tablename__ = "book_reservations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), nullable=True)
+    employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), nullable=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(10), default="menunggu")  # menunggu | dipinjam | batal
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
 # Resource REST -> model (urutan = urutan aman untuk seeding karena foreign key)
 RESOURCES: dict[str, type[Base]] = {
     "settings": Setting,
@@ -555,4 +603,7 @@ RESOURCES: dict[str, type[Base]] = {
     "expenses": Expense,
     "leave_requests": LeaveRequest,
     "teaching_journals": TeachingJournal,
+    "books": Book,
+    "book_loans": BookLoan,
+    "book_reservations": BookReservation,
 }

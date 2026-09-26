@@ -36,6 +36,8 @@ WRITE_ROLES: dict[str, set[str]] = {
     "enrollments": ADMIN,  # diisi lewat aksi arsip / kenaikan kelas
     "expenses": {"admin", "keuangan"}, "teaching_journals": {"admin", "guru"},
     "leave_requests": ADMIN,  # lewat aksi leave.submit / leave.review
+    "books": {"admin", "pustakawan"},
+    "book_loans": ADMIN, "book_reservations": ADMIN,  # lewat aksi library.*
 }
 # Data yang tidak boleh dilihat siswa/orang tua sama sekali
 STAFF_ONLY_READ = {"applicants", "teaching_journals"}
@@ -58,6 +60,9 @@ def scope_query(stmt, model, p: Principal):
     cols = {c.key for c in inspect(model).mapper.column_attrs}
     if resource == "users" and p.role != "admin":
         return stmt.where(User.id == p.user.id)
+    if resource in ("book_loans", "book_reservations") and not p.is_family and p.role not in ("admin", "pustakawan", "kepsek"):
+        # Guru/staf lain hanya melihat pinjaman miliknya sendiri
+        return stmt.where(getattr(model, "employee_id") == (p.user.employee_id or -1))
     if resource == "expenses" and p.role not in FINANCE_READ:
         return stmt.where(False)
     if resource == "employee_attendance" and p.role not in ("admin", "kepsek"):

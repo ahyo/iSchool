@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .models import AcademicYear, Employee, Enrollment, Grade, Guardian, SchoolClass, Student, Subject, Unit, User
+from .models import AcademicYear, Book, BookLoan, Employee, Enrollment, Grade, Guardian, SchoolClass, Student, Subject, Unit, User
 from .security import hash_password
 
 DEFAULT_PASSWORD = "demo123"
@@ -195,6 +195,44 @@ def run_import(db: Session, kind: str, rows: list[dict], dry_run: bool) -> dict:
                     db.add(User(username=nip, password_hash=hash_password(DEFAULT_PASSWORD), name=nama, role="guru", employee_id=e.id, is_active=True))
                     usernames.add(nip)
                     accounts += 1
+
+        elif kind == "buku":
+            kode, judul, kategori = s(r.get("kode")), s(r.get("judul")), s(r.get("kategori"))
+            label = f"{kode} · {judul}"
+            if not kode: errors.append("Kode buku wajib diisi")
+            if not judul: errors.append("Judul wajib diisi")
+            cats = ["Fiksi", "Nonfiksi", "Buku Pelajaran", "Referensi", "Majalah", "Buku Anak"]
+            cat = next((c for c in cats if c.lower() == kategori.lower()), None)
+            if not cat: errors.append(f"Kategori harus salah satu: {', '.join(cats)}")
+            try:
+                raw_copies = float(s(r.get("jumlah_eksemplar")))
+                copies = int(raw_copies)
+                if copies < 1 or raw_copies != copies: raise ValueError
+            except ValueError:
+                copies = 0
+                errors.append("Jumlah eksemplar harus bilangan bulat ≥ 1")
+            year = None
+            if s(r.get("tahun")):
+                try:
+                    year = int(float(s(r.get("tahun"))))
+                    if not 1000 <= year <= 2100: raise ValueError
+                except ValueError:
+                    errors.append("Tahun terbit tidak valid")
+            unit_str = s(r.get("unit"))
+            unit = units.get(unit_str.upper()) if unit_str else None
+            if unit_str and not unit: errors.append(f'Unit "{unit_str}" tidak dikenal')
+            if kode.lower() in seen: errors.append("Kode buku duplikat di dalam file")
+            seen.add(kode.lower())
+            existing = db.scalars(select(Book).where(func.lower(Book.code) == kode.lower())).first() if kode else None
+            if existing:
+                status = "perbarui"
+                on_loan = db.scalar(select(func.count(BookLoan.id)).where(BookLoan.book_id == existing.id, BookLoan.returned_at.is_(None))) or 0
+                if copies and copies < on_loan: errors.append(f"Jumlah eksemplar tidak boleh kurang dari yang sedang dipinjam ({on_loan})")
+            if not errors and apply:
+                b = existing or Book(cover_url="")
+                b.code, b.title, b.author, b.publisher, b.year, b.isbn = kode, judul, s(r.get("pengarang")), s(r.get("penerbit")), year, s(r.get("isbn"))
+                b.category, b.unit_id, b.location, b.copies, b.description = cat, unit.id if unit else None, s(r.get("lokasi_rak")), copies, s(r.get("deskripsi"))
+                db.add(b)
 
         elif kind in ("riwayat_kelas", "nilai"):
             nis = s(r.get("nis"))

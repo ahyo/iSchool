@@ -4,7 +4,7 @@ import { buildSeed, SEED_VERSION } from './seed';
 const KEY = `ischool-demo-db-v${SEED_VERSION}`;
 
 /** Koleksi yang ditambahkan setelah rilis awal; diisi otomatis pada data demo lama. */
-const ADDED_COLLECTIONS: Resource[] = ['lessons', 'lesson_progress', 'virtual_classes', 'discussions', 'enrollments', 'expenses', 'leave_requests', 'teaching_journals'];
+const ADDED_COLLECTIONS: Resource[] = ['lessons', 'lesson_progress', 'virtual_classes', 'discussions', 'enrollments', 'expenses', 'leave_requests', 'teaching_journals', 'books', 'book_loans', 'book_reservations'];
 
 let db: DB | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;

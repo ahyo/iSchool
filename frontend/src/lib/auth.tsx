@@ -8,12 +8,13 @@ export const ROLE_LABEL: Record<Role, string> = {
   kepsek: 'Kepala Sekolah',
   keuangan: 'Bagian Keuangan',
   kesiswaan: 'Bagian Kesiswaan',
+  pustakawan: 'Pustakawan',
   guru: 'Guru',
   siswa: 'Siswa',
   ortu: 'Orang Tua / Wali',
 };
 
-export const STAFF_ROLES: Role[] = ['admin', 'kepsek', 'keuangan', 'kesiswaan'];
+export const STAFF_ROLES: Role[] = ['admin', 'kepsek', 'keuangan', 'kesiswaan', 'pustakawan'];
 
 interface AuthCtx {
   user: User | null;

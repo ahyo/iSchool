@@ -368,3 +368,78 @@ def test_expenses_finance_only(client, auth):
     assert client.get("/api/expenses", headers=auth("guru")).json() == []
     assert client.get("/api/expenses", headers=auth("ortu")).json() == []
     assert client.post("/api/expenses", headers=auth("kesiswaan"), json={"date": "2026-09-01", "category": "Lainnya", "description": "x", "amount": 1}).status_code == 403
+
+
+# ------------------------------------------------------------------ perpustakaan
+def _book(client, h, title):
+    return next(b for b in client.get("/api/books", headers=h).json() if b["title"] == title)
+
+
+def test_library_borrow_return_with_fine(client, auth):
+    h = auth("pustakawan")
+    book = _book(client, h, "Bumi Manusia")
+    st = next(s for s in client.get("/api/students?status=aktif", headers=h).json() if s["unit_id"] == 2)
+    loan = client.post("/api/actions/library.borrow", headers=h, json={"book_id": book["id"], "student_id": st["id"]})
+    assert loan.status_code == 200, loan.text
+    # tidak boleh meminjam buku yang sama dua kali
+    assert client.post("/api/actions/library.borrow", headers=h, json={"book_id": book["id"], "student_id": st["id"]}).status_code == 400
+    ret = client.post("/api/actions/library.return", headers=h, json={"loan_id": loan.json()["id"]}).json()
+    assert ret["late_days"] == 0 and ret["fine"] == 0 and ret["fine_paid"]
+
+
+def test_library_blocks_overdue_borrower_and_computes_fine(client, auth):
+    h = auth("pustakawan")
+    ho = auth("ortu")
+    late = next(l for l in client.get("/api/book_loans", headers=ho).json() if l["returned_at"] is None and l["due_date"] < __import__("datetime").date.today().isoformat())
+    other_book = _book(client, h, "Hujan")
+    r = client.post("/api/actions/library.borrow", headers=h, json={"book_id": other_book["id"], "student_id": late["student_id"]})
+    assert r.status_code == 400 and "terlambat" in r.json()["detail"]
+    ret = client.post("/api/actions/library.return", headers=h, json={"loan_id": late["id"], "pay_fine": False}).json()
+    assert ret["late_days"] > 0 and ret["fine"] == ret["late_days"] * 500 and not ret["fine_paid"]
+    # denda belum dibayar tetap memblokir
+    assert "denda" in client.post("/api/actions/library.borrow", headers=h, json={"book_id": other_book["id"], "student_id": late["student_id"]}).json()["detail"]
+    assert client.post("/api/actions/library.payFine", headers=h, json={"loan_id": late["id"]}).status_code == 200
+    assert client.post("/api/actions/library.borrow", headers=h, json={"book_id": other_book["id"], "student_id": late["student_id"]}).status_code == 200
+
+
+def test_library_permissions_and_scoping(client, auth):
+    hs = auth("siswa")
+    me = client.get("/api/students", headers=hs).json()[0]
+    assert all(l["student_id"] == me["id"] for l in client.get("/api/book_loans", headers=hs).json())
+    hg = auth("guru")
+    gme = client.get("/api/auth/me", headers=hg).json()
+    assert all(l["employee_id"] == gme["employee_id"] for l in client.get("/api/book_loans", headers=hg).json())
+    book = _book(client, hs, "Atlas Indonesia dan Dunia")
+    # siswa tidak boleh mencatat peminjaman / mengubah katalog
+    assert client.post("/api/actions/library.borrow", headers=hs, json={"book_id": book["id"], "student_id": me["id"]}).status_code == 403
+    assert client.patch(f"/api/books/{book['id']}", headers=hs, json={"copies": 99}).status_code == 403
+
+
+def test_library_reserve_extend_and_settings(client, auth):
+    hs = auth("siswa")
+    book = _book(client, hs, "Atlas Indonesia dan Dunia")
+    r = client.post("/api/actions/library.reserve", headers=hs, json={"book_id": book["id"]})
+    assert r.status_code == 200
+    assert client.post("/api/actions/library.reserve", headers=hs, json={"book_id": book["id"]}).status_code == 400  # duplikat
+    assert client.post("/api/actions/library.cancelReservation", headers=hs, json={"id": r.json()["id"]}).json()["status"] == "batal"
+    active = next(l for l in client.get("/api/book_loans", headers=hs).json() if l["returned_at"] is None)
+    ext = client.post("/api/actions/library.extend", headers=hs, json={"loan_id": active["id"]})
+    assert ext.status_code == 200 and ext.json()["extended"]
+    assert client.post("/api/actions/library.extend", headers=hs, json={"loan_id": active["id"]}).status_code == 400  # hanya sekali
+    hp = auth("pustakawan")
+    cfg = client.post("/api/actions/library.settings", headers=hp, json={"library_loan_days": 14, "library_max_loans": 2, "library_fine_per_day": 1000}).json()
+    assert cfg["library_loan_days"] == 14
+    assert client.post("/api/actions/library.settings", headers=auth("guru"), json={"library_loan_days": 1, "library_max_loans": 1, "library_fine_per_day": 0}).status_code == 403
+    client.post("/api/actions/library.settings", headers=hp, json={"library_loan_days": 7, "library_max_loans": 3, "library_fine_per_day": 500})
+
+
+def test_import_books(client, auth):
+    h = auth("pustakawan")
+    res = client.post("/api/actions/import.run", headers=h, json={"kind": "buku", "dry_run": False, "rows": [
+        {"kode": "UJI-001", "judul": "Buku Uji Impor", "kategori": "fiksi", "jumlah_eksemplar": 2, "tahun": 2020},
+        {"kode": "UJI-002", "judul": "Kategori Salah", "kategori": "Komik", "jumlah_eksemplar": 1},
+        {"kode": "FIK-001", "judul": "Laskar Pelangi", "kategori": "Fiksi", "jumlah_eksemplar": 6},
+    ]}).json()
+    assert res["created"] == 1 and res["updated"] == 1 and res["failed"] == 1
+    assert _book(client, h, "Laskar Pelangi")["copies"] == 6
+    assert client.post("/api/actions/import.run", headers=auth("kesiswaan"), json={"kind": "buku", "rows": [{"kode": "x"}]}).status_code == 403
