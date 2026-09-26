@@ -5,7 +5,8 @@ import { api, useData } from '@/lib/api';
 import { useLearningScope, type LearningScope } from '@/lib/useLearningScope';
 import { Avatar, Badge, Button, Card, Empty, Field, Input, Loading, Modal, PageHeader, Select, StatCard, Tabs, run, toast } from '@/components/ui';
 import { cn, avg, fmtDate, round, today } from '@/lib/utils';
-import type { Exam, Question } from '@/lib/types';
+import type { Exam } from '@/lib/types';
+import { QuestionEditor, emptyQuestion, validateQuestions } from '@/components/QuestionEditor';
 
 const TYPE_LABEL: Record<Exam['type'], string> = { UH: 'Ulangan Harian', PTS: 'Penilaian Tengah Semester', PAS: 'Penilaian Akhir Semester', PAT: 'Penilaian Akhir Tahun', US: 'Ujian Sekolah', UKK: 'Uji Kompetensi Keahlian' };
 
@@ -189,7 +190,7 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
 
   return (
     <>
-      <PageHeader title="Ujian & CBT" subtitle="Jadwal ujian, bank soal, dan penilaian otomatis" actions={canManage && <Button onClick={() => setBuilder({ class_id: Number(classId) || pairs[0]?.class_id, subject_id: pairs[0]?.subject_id, type: 'UH', date: today(), start_time: '08:00', duration: 45, is_online: true, questions: [{ q: '', options: ['', '', '', ''], answer: 0 }] })}><Plus className="h-4 w-4" /> Buat Ujian</Button>} />
+      <PageHeader title="Ujian & CBT" subtitle="Jadwal ujian, bank soal, dan penilaian otomatis" actions={canManage && <Button onClick={() => setBuilder({ class_id: Number(classId) || pairs[0]?.class_id, subject_id: pairs[0]?.subject_id, type: 'UH', date: today(), start_time: '08:00', duration: 45, is_online: true, questions: [emptyQuestion()] })}><Plus className="h-4 w-4" /> Buat Ujian</Button>} />
       <div className="mb-4"><Select className="w-52" value={classId} onChange={(e) => setClassId(e.target.value)} placeholder="Semua kelas" options={classList.map((c) => ({ value: c.id, label: c.name }))} /></div>
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'mendatang', label: 'Mendatang / Hari Ini' }, { value: 'selesai', label: 'Selesai' }]} />
       <Card bodyClass="p-0">
@@ -255,10 +256,9 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
 function ExamBuilder({ initial, scope, onClose }: { initial: Partial<Exam>; scope: LearningScope; onClose: () => void }) {
   const [e, setE] = useState<Partial<Exam>>(initial);
   const qs = e.questions || [];
-  const setQ = (i: number, q: Partial<Question>) => setE({ ...e, questions: qs.map((x, j) => (j === i ? { ...x, ...q } : x)) });
   const save = () => run(async () => {
     if (!e.name) throw new Error('Nama ujian wajib diisi');
-    if (e.is_online && qs.some((q) => !q.q || q.options.some((o) => !o))) throw new Error('Lengkapi semua soal dan pilihan jawaban');
+    if (e.is_online) validateQuestions(qs);
     const teacher_id = scope.employee?.id || (await api.list('schedules', { class_id: e.class_id, subject_id: e.subject_id }))[0]?.teacher_id || 0;
     await api.create('exams', { ...e, class_id: Number(e.class_id), subject_id: Number(e.subject_id), duration: Number(e.duration), teacher_id, questions: e.is_online ? qs : [] } as Exam);
     onClose();
@@ -275,31 +275,7 @@ function ExamBuilder({ initial, scope, onClose }: { initial: Partial<Exam>; scop
         <Field label="Durasi (menit)"><Input type="number" value={e.duration} onChange={(x) => setE({ ...e, duration: Number(x.target.value) })} /></Field>
         <Field label="Mode"><Select value={e.is_online ? '1' : '0'} onChange={(x) => setE({ ...e, is_online: x.target.value === '1' })} options={[{ value: '1', label: 'CBT Online (pilihan ganda)' }, { value: '0', label: 'Tertulis / luring' }]} /></Field>
       </div>
-      {e.is_online && (
-        <div className="mt-6 space-y-4">
-          <p className="font-semibold">Soal Pilihan Ganda ({qs.length})</p>
-          {qs.map((q, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 p-4">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-slate-500">{i + 1}.</span>
-                <Input value={q.q} placeholder="Pertanyaan" onChange={(x) => setQ(i, { q: x.target.value })} />
-                <Button size="sm" variant="ghost" onClick={() => setE({ ...e, questions: qs.filter((_, j) => j !== i) })}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-              </div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {q.options.map((o, k) => (
-                  <label key={k} className="flex items-center gap-2">
-                    <input type="radio" name={`ans-${i}`} checked={q.answer === k} onChange={() => setQ(i, { answer: k })} title="Kunci jawaban" />
-                    <span className="text-sm font-semibold">{String.fromCharCode(65 + k)}</span>
-                    <Input value={o} onChange={(x) => setQ(i, { options: q.options.map((y, m) => (m === k ? x.target.value : y)) })} />
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-          <Button variant="secondary" onClick={() => setE({ ...e, questions: [...qs, { q: '', options: ['', '', '', ''], answer: 0 }] })}><Plus className="h-4 w-4" /> Tambah Soal</Button>
-          <p className="text-xs text-slate-500">Pilih tombol radio untuk menandai kunci jawaban. Nilai dihitung otomatis saat siswa mengirim jawaban.</p>
-        </div>
-      )}
+      {e.is_online && <div className="mt-6"><QuestionEditor questions={qs} onChange={(questions) => setE({ ...e, questions })} /></div>}
     </Modal>
   );
 }

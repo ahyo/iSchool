@@ -14,8 +14,8 @@ from ..database import get_db
 from ..deps import Principal, bearer, ensure_role, get_principal
 from ..models import (
     AcademicYear, Announcement, Applicant, Bill, Employee, EmployeeAttendance, Event, Exam, ExamResult,
-    Extracurricular, FeeType, Grade, Guardian, Major, Payment, Promotion, SchoolClass, Setting, Student,
-    StudentAttendance, Submission, Unit, User,
+    Discussion, Extracurricular, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
+    Setting, Student, StudentAttendance, Submission, Unit, User, VirtualClass,
 )
 from ..security import hash_password
 from ..serialize import to_dict
@@ -383,6 +383,96 @@ def ekskul_toggle(db: Session, p: dict, user: Principal):
     return to_dict(e)
 
 
+# ------------------------------------------------------------------ e-learning
+def elearning_complete(db: Session, p: dict, user: Principal):
+    sid = _own_student(p, user)
+    lesson = db.get(Lesson, int(p.get("lesson_id") or 0))
+    if not lesson or not lesson.is_published:
+        raise HTTPException(404, "Pelajaran tidak ditemukan")
+    student = db.get(Student, sid)
+    if not student or student.class_id != lesson.class_id:
+        raise HTTPException(403, "Pelajaran bukan untuk kelas Anda")
+    score, correct, quiz = None, 0, lesson.quiz or []
+    if lesson.type == "kuis":
+        answers = list(p.get("answers") or [])
+        if len(answers) < len(quiz) or any(a is None or a < 0 for a in answers[: len(quiz)]):
+            raise HTTPException(400, "Jawab semua pertanyaan kuis terlebih dahulu")
+        correct = sum(1 for i, q in enumerate(quiz) if answers[i] == q.get("answer"))
+        score = round(correct / len(quiz) * 100) if quiz else 0
+    row = db.scalars(select(LessonProgress).where(LessonProgress.lesson_id == lesson.id, LessonProgress.student_id == sid)).first()
+    if row:
+        row.completed_at = now()
+        if score is not None:
+            row.quiz_score = max(row.quiz_score or 0, score)
+    else:
+        row = LessonProgress(lesson_id=lesson.id, student_id=sid, completed_at=now(), quiz_score=score)
+        db.add(row)
+    db.commit()
+    return {"progress": to_dict(row), "score": score, "correct": correct, "total": len(quiz)}
+
+
+def elearning_join(db: Session, p: dict, user: Principal):
+    vc = db.get(VirtualClass, int(p.get("virtual_class_id") or 0))
+    if not vc:
+        raise HTTPException(404, "Kelas virtual tidak ditemukan")
+    if user.role == "siswa":
+        sid = _own_student(p, user)
+        student = db.get(Student, sid)
+        if student.class_id != vc.class_id:
+            raise HTTPException(403, "Kelas virtual bukan untuk kelas Anda")
+        if vc.date != today():
+            raise HTTPException(400, "Kelas virtual hanya dapat diikuti pada hari pelaksanaan")
+        if sid not in (vc.attendee_ids or []):
+            vc.attendee_ids = [*(vc.attendee_ids or []), sid]
+            db.commit()
+    return {"link": vc.link}
+
+
+def discussions_post(db: Session, p: dict, user: Principal):
+    if user.role == "ortu":
+        raise HTTPException(403, "Orang tua hanya dapat membaca diskusi")
+    body, title = (p.get("body") or "").strip(), (p.get("title") or "").strip()
+    if not body:
+        raise HTTPException(422, "Isi diskusi tidak boleh kosong")
+    parent_id = p.get("parent_id") or None
+    if not parent_id and not title:
+        raise HTTPException(422, "Judul topik wajib diisi")
+    class_id, subject_id = int(p["class_id"]), int(p["subject_id"])
+    if user.role == "siswa":
+        student = db.get(Student, next(iter(user.student_ids), 0))
+        if not student or student.class_id != class_id:
+            raise HTTPException(403, "Anda bukan anggota kelas ini")
+    row = Discussion(class_id=class_id, subject_id=subject_id, parent_id=parent_id, user_id=user.user.id, author=user.user.name,
+                     author_role=user.role, title=title, body=body, pinned=False, created_at=now())
+    db.add(row)
+    db.commit()
+    return to_dict(row)
+
+
+def discussions_delete(db: Session, p: dict, user: Principal):
+    row = db.get(Discussion, int(p.get("id") or 0))
+    if not row:
+        raise HTTPException(404, "Diskusi tidak ditemukan")
+    if row.user_id != user.user.id and user.role not in ("guru", "admin"):
+        raise HTTPException(403, "Anda tidak dapat menghapus diskusi ini")
+    for r in db.scalars(select(Discussion).where(Discussion.parent_id == row.id)):
+        db.delete(r)
+    db.flush()
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+def discussions_pin(db: Session, p: dict, user: Principal):
+    ensure_role(user, "guru", "admin")
+    row = db.get(Discussion, int(p.get("id") or 0))
+    if not row:
+        raise HTTPException(404, "Diskusi tidak ditemukan")
+    row.pinned = not row.pinned
+    db.commit()
+    return to_dict(row)
+
+
 HANDLERS = {
     "public.portal": public_portal,
     "ppdb.register": ppdb_register,
@@ -402,6 +492,11 @@ HANDLERS = {
     "promotions.process": promotions_process,
     "academic_years.activate": academic_years_activate,
     "ekskul.toggle": ekskul_toggle,
+    "elearning.complete": elearning_complete,
+    "elearning.join": elearning_join,
+    "discussions.post": discussions_post,
+    "discussions.delete": discussions_delete,
+    "discussions.pin": discussions_pin,
 }
 
 

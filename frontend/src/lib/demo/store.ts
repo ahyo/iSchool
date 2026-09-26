@@ -3,6 +3,9 @@ import { buildSeed, SEED_VERSION } from './seed';
 
 const KEY = `ischool-demo-db-v${SEED_VERSION}`;
 
+/** Koleksi yang ditambahkan setelah rilis awal; diisi otomatis pada data demo lama. */
+const ADDED_COLLECTIONS: Resource[] = ['lessons', 'lesson_progress', 'virtual_classes', 'discussions'];
+
 let db: DB | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
@@ -14,6 +17,13 @@ export function getDB(): DB {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         db = JSON.parse(raw) as DB;
+        // Migrasi: tambahkan koleksi baru (mis. e-learning) tanpa menghapus data yang sudah diubah pengguna
+        const cur = db as unknown as Record<string, unknown>;
+        if (ADDED_COLLECTIONS.some((k) => !(k in cur))) {
+          const fresh = buildSeed() as unknown as Record<string, unknown>;
+          ADDED_COLLECTIONS.forEach((k) => { if (!(k in cur)) cur[k] = fresh[k]; });
+          persist();
+        }
         return db;
       }
     } catch {

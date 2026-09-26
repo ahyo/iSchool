@@ -1,11 +1,13 @@
 'use client';
 import Link from 'next/link';
 import { useMemo } from 'react';
-import { BookOpen, CalendarClock, ClipboardCheck, FileQuestion, GraduationCap, LogIn, LogOut, NotebookPen, Receipt, School, Users } from 'lucide-react';
+import { MonitorPlay, Video, BookOpen, CalendarClock, ClipboardCheck, FileQuestion, GraduationCap, LogIn, LogOut, NotebookPen, Receipt, School, Users } from 'lucide-react';
 import { api, useData } from '@/lib/api';
 import { useProfile } from '@/lib/auth';
 import { Avatar, Badge, Button, Card, Empty, Loading, StatCard, StatusBadge, run } from '@/components/ui';
 import { BarsChart } from '@/components/charts';
+import { courseProgress } from '@/components/elearning';
+import { ProgressBar } from '@/components/ui';
 import { indexBy, teacherClassIds } from '@/lib/scope';
 import { avg, DAYS, fmtDate, rupiah, round, today } from '@/lib/utils';
 
@@ -122,7 +124,7 @@ function AnnouncementList({ items }: { items: { id: number; title: string; conte
 
 export function StudentDashboard() {
   const { student, loaded } = useProfile();
-  const { data } = useData(['classes', 'subjects', 'employees', 'schedules', 'student_attendance', 'grades', 'assignments', 'submissions', 'exams', 'exam_results', 'bills', 'announcements', 'units']);
+  const { data } = useData(['classes', 'subjects', 'employees', 'schedules', 'student_attendance', 'grades', 'assignments', 'submissions', 'exams', 'exam_results', 'bills', 'announcements', 'units', 'lessons', 'lesson_progress', 'virtual_classes', 'discussions']);
   const m = useMemo(() => {
     if (!data || !student) return null;
     const att = data.student_attendance.filter((a) => a.student_id === student.id);
@@ -144,6 +146,8 @@ export function StudentDashboard() {
   const dow = todayDow();
   const schedule = data.schedules.filter((s) => s.class_id === student.class_id && s.day === dow).sort((a, b) => a.start_time.localeCompare(b.start_time));
   const gradeChart = m.grades.map((g) => ({ label: sub.get(g.subject_id)?.code || '', nilai: g.final || 0 }));
+  const elCourses = [...new Set(data.lessons.filter((l) => l.class_id === student.class_id && l.is_published).map((l) => l.subject_id))].map((sid) => ({ class_id: student.class_id!, subject_id: sid, ...courseProgress(data, { class_id: student.class_id!, subject_id: sid }, student.id) }));
+  const vcs = data.virtual_classes.filter((v) => v.class_id === student.class_id && v.date >= today()).sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time)).slice(0, 4);
   const announcements = data.announcements.filter((a) => ['semua', 'siswa', 'ortu'].includes(a.audience)).sort((a, b) => b.published_at.localeCompare(a.published_at)).slice(0, 4);
 
   return (
@@ -202,6 +206,32 @@ export function StudentDashboard() {
           {!m.exams.length && <Empty text="Tidak ada ujian terjadwal" />}
         </Card>
         <AnnouncementList items={announcements} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card title={<span className="flex items-center gap-2"><MonitorPlay className="h-4 w-4" /> Progres E-Learning</span>} actions={<Link href="/elearning/" className="text-sm text-brand-600 hover:underline">Buka kelas online</Link>}>
+          <ul className="space-y-3">
+            {elCourses.map((c) => (
+              <li key={c.subject_id}>
+                <Link href={`/elearning/?c=${c.class_id}-${c.subject_id}`} className="block hover:opacity-80">
+                  <div className="mb-1 flex justify-between text-sm"><span>{sub.get(c.subject_id)?.name}</span><span className="text-xs text-slate-500">{c.done}/{c.total} · {c.pct}%</span></div>
+                  <ProgressBar value={c.pct} tone={c.pct >= 80 ? 'green' : c.pct >= 40 ? 'blue' : 'amber'} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {!elCourses.length && <Empty text="Belum ada kelas online" />}
+        </Card>
+        <Card title={<span className="flex items-center gap-2"><Video className="h-4 w-4" /> Kelas Virtual Mendatang</span>} bodyClass="p-0">
+          <ul className="divide-y divide-slate-100">
+            {vcs.map((v) => (
+              <li key={v.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+                <div><p className="font-medium">{v.title}</p><p className="text-xs text-slate-500">{sub.get(v.subject_id)?.name} · {v.start_time}–{v.end_time} · {v.platform}</p></div>
+                <Badge tone={v.date === today() ? 'green' : 'slate'}>{v.date === today() ? 'Hari ini' : fmtDate(v.date, { day: 'numeric', month: 'short' })}</Badge>
+              </li>
+            ))}
+          </ul>
+          {!vcs.length && <Empty text="Tidak ada kelas virtual terjadwal" />}
+        </Card>
       </div>
     </>
   );

@@ -18,8 +18,8 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 | `kepsek` | Kepala Sekolah | Dashboard monitoring, laporan keuangan, kenaikan/kelulusan |
 | `keuangan` | Bagian Keuangan | Generate tagihan massal, terima pembayaran & cetak kwitansi, laporan |
 | `kesiswaan` | Bagian Kesiswaan | Verifikasi PPDB → daftar ulang, mutasi, prestasi/pelanggaran |
-| `guru` | Guru (wali kelas XI MIPA) | Presensi mandiri & kelas, materi, tugas, ujian CBT, input nilai, rapor |
-| `siswa` | Siswa XI MIPA | Kerjakan kuis CBT hari ini, kumpulkan tugas, bayar tagihan, lihat rapor |
+| `guru` | Guru (wali kelas XI MIPA) | Presensi mandiri & kelas, e-learning (buat pelajaran, kelas virtual, progres), tugas, ujian CBT, nilai, rapor |
+| `siswa` | Siswa XI MIPA | Belajar di E-Learning (kuis, kelas virtual hari ini, diskusi), CBT hari ini, tugas, tagihan, rapor |
 | `ortu` | Orang tua (2 anak: SMA & SMP) | Pantau nilai, kehadiran, tugas, dan bayar tagihan tiap anak |
 
 ## Fitur per modul
@@ -32,6 +32,7 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 | Presensi | Presensi siswa harian per kelas (H/S/I/A) + rekap bulanan; presensi guru & pegawai check-in/out dengan deteksi terlambat + rekap |
 | Akademik | Tahun ajaran & semester, kelas/rombel & wali kelas, mata pelajaran & KKTP, jadwal pelajaran (per kelas/per guru, cek bentrok) |
 | Pembelajaran | Materi pelajaran, tugas (pengumpulan, penilaian, umpan balik), ujian & CBT pilihan ganda dengan timer dan penilaian otomatis |
+| E-Learning | Kelas online per mapel-kelas: modul & pelajaran bertahap (bacaan, video YouTube/Vimeo/Drive/MP4, dokumen, kuis dengan nilai otomatis & bisa diulang), draf/publikasi, pelacakan progres per siswa (+ ekspor CSV), kelas virtual (Jitsi/Meet/Zoom/Teams) dengan pencatatan kehadiran & rekaman, forum diskusi (topik, balasan, sematkan, moderasi), dipantau orang tua |
 | Nilai & rapor | Input nilai (tugas, harian, PTS, PAS → nilai akhir berbobot), leger kelas + ranking, rapor siap cetak |
 | Kenaikan & kelulusan | Rekomendasi otomatis (nilai < KKTP, kehadiran, poin pelanggaran), keputusan naik/tinggal/lulus, riwayat |
 | Kesiswaan | Prestasi, pelanggaran (poin), konseling, ekstrakurikuler |
@@ -101,10 +102,10 @@ Frontend memakai kontrak yang sama di kedua mode:
 | `GET` | `/api/{resource}?kolom=nilai` | daftar data + filter |
 | `POST` | `/api/{resource}` | tambah data |
 | `GET/PATCH/DELETE` | `/api/{resource}/{id}` | detail / ubah / hapus |
-| `POST` | `/api/actions/{nama}` | aksi bisnis, mis. `ppdb.enroll`, `payments.pay`, `exams.submit`, `promotions.process` |
+| `POST` | `/api/actions/{nama}` | aksi bisnis, mis. `ppdb.enroll`, `payments.pay`, `exams.submit`, `elearning.complete`, `discussions.post` |
 
 Hak akses: siswa & orang tua hanya dapat membaca data miliknya sendiri (tagihan, nilai, presensi, dll.),
-kunci jawaban ujian tidak dikirim ke siswa, dan setiap resource memiliki daftar peran yang boleh menulis.
+kunci jawaban ujian & kuis tidak dikirim ke siswa, draf pelajaran tidak terlihat oleh siswa, dan setiap resource memiliki daftar peran yang boleh menulis.
 
 ## Deploy demo ke GitHub Pages
 

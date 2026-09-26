@@ -30,6 +30,9 @@ WRITE_ROLES: dict[str, set[str]] = {
     "announcements": {"admin", "kepsek", "kesiswaan", "keuangan"}, "events": {"admin", "kepsek", "kesiswaan", "keuangan"},
     "student_records": {"admin", "kesiswaan", "guru"}, "promotions": {"admin", "kepsek", "kesiswaan"},
     "extracurriculars": {"admin", "kesiswaan"},
+    # E-learning: konten oleh guru; progres & diskusi hanya lewat aksi (/api/actions)
+    "lessons": {"admin", "guru"}, "virtual_classes": {"admin", "guru"},
+    "lesson_progress": ADMIN, "discussions": ADMIN,
 }
 # Data yang tidak boleh dilihat siswa/orang tua sama sekali
 STAFF_ONLY_READ = {"applicants"}
@@ -54,6 +57,8 @@ def scope_query(stmt, model, p: Principal):
         return stmt
     if resource in STAFF_ONLY_READ:
         return stmt.where(False)
+    if resource == "lessons":
+        return stmt.where(model.is_published.is_(True))
     ids = p.student_ids or {-1}
     if resource == "students":
         return stmt.where(Student.id.in_(ids))
@@ -69,6 +74,8 @@ def serialize(obj, p: Principal) -> dict[str, Any]:
     # Kunci jawaban ujian tidak dikirim ke siswa / orang tua
     if p.is_family and obj.__tablename__ == "exams":
         d["questions"] = [{"q": q.get("q"), "options": q.get("options"), "answer": -1} for q in d.get("questions") or []]
+    if p.is_family and obj.__tablename__ == "lessons":
+        d["quiz"] = [{"q": q.get("q"), "options": q.get("options"), "answer": -1} for q in d.get("quiz") or []]
     return d
 
 

@@ -2,7 +2,7 @@ import type {
   DB, Unit, Employee, Subject, SchoolClass, Student, Guardian, Schedule, StudentAttendance,
   EmployeeAttendance, Grade, FeeType, Bill, Payment, Applicant, Announcement, EventItem,
   StudentRecord, Material, Assignment, Submission, Exam, ExamResult, Question, Major, User,
-  Extracurricular, AttendanceStatus,
+  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion,
 } from '../types';
 import { addDays, isWeekend, today, pad, computeFinal } from '../utils';
 
@@ -539,6 +539,66 @@ export function buildSeed(): DB {
     exams.push({ id: ++exid, class_id: demoClass.id, subject_id: mtk.id, teacher_id: subjectTeacher[mtk.id], name: 'Kuis Harian Matematika (CBT)', type: 'UH', date: TODAY, start_time: '07:30', duration: 20, is_online: true, questions: [...questionsFor('MTK'), ...questionsFor('UMUM').slice(0, 3)] });
   }
 
+  // ---------- E-Learning: pelajaran, progres, kelas virtual, diskusi ----------
+  const SAMPLE_VIDEO = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4';
+  const SAMPLE_DOC = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
+  const lessons: Lesson[] = [];
+  const lesson_progress: LessonProgress[] = [];
+  const virtual_classes: VirtualClass[] = [];
+  const discussions: Discussion[] = [];
+  let lid = 0, lpid = 0, vcid = 0, did = 0;
+  for (const c of classes) {
+    const subs = classSubjects(c.id);
+    const members = activeStudents.filter((s) => s.class_id === c.id);
+    const chosen = c.id === demoClass.id ? subs.filter((s) => ['MTK', 'INF', 'BIN', 'BIG', 'FIS'].includes(s.code)) : subs.slice(0, 3);
+    for (const sub of chosen) {
+      const teacher = subjectTeacher[sub.id];
+      const qs = questionsFor(sub.code);
+      const created = (d: number) => `${addDays(TODAY, -d)}T08:00:00`;
+      const L = (module: string, order: number, title: string, type: Lesson['type'], extra: Partial<Lesson>, d: number): Lesson => ({
+        id: ++lid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, module, order, title, type,
+        content: '', video_url: '', file_url: '', duration: 10, quiz: [], is_published: true, created_at: created(d), ...extra,
+      });
+      const m1 = `Bab 1 · Pengantar ${sub.name}`;
+      const m2 = `Bab 2 · Pendalaman ${sub.name}`;
+      const list = [
+        L(m1, 1, 'Tujuan Pembelajaran & Peta Konsep', 'teks', { duration: 8, content: `Selamat datang di kelas online ${sub.name} ${c.name}!\n\nSetelah menyelesaikan bab ini, kamu diharapkan mampu:\n• Menjelaskan konsep-konsep dasar ${sub.name}.\n• Menghubungkan konsep dengan contoh dalam kehidupan sehari-hari.\n• Menyelesaikan latihan soal secara mandiri.\n\nPeta konsep:\n1. Pengertian dan ruang lingkup\n2. Konsep inti dan istilah penting\n3. Penerapan dan latihan\n\nTips belajar: pelajari materi secara berurutan, catat hal yang belum dipahami, lalu tanyakan di forum diskusi.` }, 30),
+        L(m1, 2, `Video: Pengantar ${sub.name}`, 'video', { duration: 12, video_url: SAMPLE_VIDEO, content: 'Tonton video berikut sampai selesai, lalu tuliskan tiga hal penting yang kamu pelajari di buku catatan.' }, 29),
+        L(m1, 3, 'Ringkasan Materi Bab 1 (PDF)', 'dokumen', { duration: 15, file_url: SAMPLE_DOC, content: 'Unduh dan baca ringkasan materi. Dokumen ini juga dapat dicetak untuk belajar luring.' }, 28),
+        L(m1, 4, 'Kuis Pemahaman Bab 1', 'kuis', { duration: 10, quiz: qs.slice(0, 3), content: 'Jawab pertanyaan berikut untuk mengukur pemahamanmu. Nilai minimal ketuntasan 70.' }, 27),
+        L(m2, 1, 'Konsep Inti dan Contoh Soal', 'teks', { duration: 15, content: `Pada bab ini kita memperdalam konsep inti ${sub.name}.\n\nContoh 1\nPerhatikan permasalahan yang diberikan, identifikasi informasi yang diketahui dan yang ditanyakan, lalu pilih strategi penyelesaian yang tepat.\n\nContoh 2\nBandingkan dua pendekatan penyelesaian dan diskusikan kelebihan masing-masing di forum.\n\nRangkuman\nKonsep inti harus dipahami, bukan dihafal. Latih dengan soal bervariasi.` }, 12),
+        L(m2, 2, 'Video: Pembahasan Soal', 'video', { duration: 14, video_url: SAMPLE_VIDEO, content: 'Video pembahasan langkah demi langkah.' }, 10),
+        L(m2, 3, 'Kuis Pendalaman Bab 2', 'kuis', { duration: 10, quiz: qs.slice(2, 5), content: 'Kuis pendalaman. Kamu dapat mengulang kuis untuk memperbaiki nilai.' }, 8),
+      ];
+      if (c.id === demoClass.id && sub.code === 'MTK') list.push(L(m2, 4, 'Proyek: Penerapan dalam Kehidupan (draf)', 'teks', { is_published: false, content: 'Draf materi proyek — belum dipublikasikan ke siswa.' }, 1));
+      lessons.push(...list);
+      const published = list.filter((l) => l.is_published);
+      for (const st of members) {
+        const k = st.id === demoStudent.id ? (sub.code === 'MTK' ? 3 : int(1, 5)) : int(0, published.length);
+        published.slice(0, k).forEach((l, i) => {
+          const qScore = l.type === 'kuis' ? Math.round((l.quiz.filter(() => rand() < 0.8).length / l.quiz.length) * 100) : null;
+          lesson_progress.push({ id: ++lpid, lesson_id: l.id, student_id: st.id, completed_at: `${addDays(TODAY, -Math.max(1, 25 - i * 3))}T${pad(int(15, 21))}:${pad(int(0, 59))}:00`, quiz_score: qScore });
+        });
+      }
+      const room = `iSchool-${c.name}-${sub.code}`.replace(/\s+/g, '');
+      const past = addDays(TODAY, -int(3, 8));
+      virtual_classes.push({ id: ++vcid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, title: `Sesi Tatap Maya: Pengantar ${sub.name}`, date: past, start_time: '13:00', end_time: '14:00', platform: 'Jitsi', link: `https://meet.jit.si/${room}`, recording_url: SAMPLE_VIDEO, description: 'Pembahasan Bab 1 dan tanya jawab.', attendee_ids: members.filter(() => rand() < 0.85).map((m) => m.id) });
+      const isDemoToday = c.id === demoClass.id && sub.code === 'MTK';
+      virtual_classes.push({ id: ++vcid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, title: `Sesi Tatap Maya: Pembahasan Soal ${sub.name}`, date: isDemoToday ? TODAY : addDays(TODAY, int(1, 6)), start_time: isDemoToday ? '19:00' : '13:00', end_time: isDemoToday ? '20:00' : '14:00', platform: 'Jitsi', link: `https://meet.jit.si/${room}-2`, recording_url: '', description: 'Siapkan pertanyaan dari Bab 2 sebelum sesi dimulai.', attendee_ids: [] });
+
+      if (c.id === demoClass.id) {
+        const tName = employees.find((e) => e.id === teacher)!.name;
+        const isDemoTeacher = teacher === unitTeachers[3][0].id;
+        const welcome: Discussion = { id: ++did, class_id: c.id, subject_id: sub.id, parent_id: null, user_id: isDemoTeacher ? 5 : 0, author: tName, author_role: 'guru', title: `Selamat datang di kelas online ${sub.name}`, body: 'Silakan pelajari materi sesuai urutan modul. Gunakan forum ini untuk bertanya atau berdiskusi dengan teman. Tetap santun ya!', pinned: true, created_at: `${addDays(TODAY, -30)}T07:00:00` };
+        const ask = members.find((m) => m.id !== demoStudent.id)!;
+        const q: Discussion = { id: ++did, class_id: c.id, subject_id: sub.id, parent_id: null, user_id: 0, author: ask.name, author_role: 'siswa', title: 'Bertanya tentang contoh soal Bab 2', body: 'Pak/Bu, pada contoh 2 kenapa pendekatan kedua lebih efisien? Saya masih bingung pada langkah ketiganya.', pinned: false, created_at: `${addDays(TODAY, -4)}T19:20:00` };
+        discussions.push(welcome, q,
+          { id: ++did, class_id: c.id, subject_id: sub.id, parent_id: q.id, user_id: 6, author: demoStudent.name, author_role: 'siswa', title: '', body: 'Menurut saya karena langkahnya lebih sedikit, jadi kemungkinan salah hitung juga lebih kecil.', pinned: false, created_at: `${addDays(TODAY, -4)}T20:05:00` },
+          { id: ++did, class_id: c.id, subject_id: sub.id, parent_id: q.id, user_id: isDemoTeacher ? 5 : 0, author: tName, author_role: 'guru', title: '', body: 'Betul. Pendekatan kedua memanfaatkan sifat yang sudah kita pelajari di Bab 1 sehingga tidak perlu menghitung ulang dari awal. Kita bahas lagi di sesi tatap maya.', pinned: false, created_at: `${addDays(TODAY, -3)}T07:15:00` });
+      }
+    }
+  }
+
   // ---------- Announcements, events ----------
   const announcements: Announcement[] = [
     { id: 1, title: 'Penerimaan Peserta Didik Baru (PPDB) TA 2027/2028 Dibuka', content: 'PPDB Yayasan Nusantara Cendekia untuk jenjang SD, SMP, SMA, dan SMK tahun ajaran 2027/2028 telah dibuka. Pendaftaran dapat dilakukan secara online melalui portal ini. Tersedia jalur reguler, prestasi, dan pindahan.', category: 'PPDB', audience: 'semua', unit_id: null, is_public: true, author: 'Panitia PPDB', published_at: `${addDays(TODAY, -3)}T08:00:00` },
@@ -598,6 +658,7 @@ export function buildSeed(): DB {
     units, academic_years, users, employees, majors, subjects, classes, guardians, students, schedules,
     student_attendance, employee_attendance, materials, assignments, submissions, exams, exam_results, grades,
     fee_types, bills, payments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
+    lessons, lesson_progress, virtual_classes, discussions,
   };
 }
 

@@ -385,6 +385,68 @@ class Extracurricular(Base):
     member_ids: Mapped[list] = mapped_column(JSON, default=list)
 
 
+class Lesson(Base):
+    """Pelajaran e-learning dalam kursus (kelas + mapel), dikelompokkan per modul."""
+    __tablename__ = "lessons"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    module: Mapped[str] = mapped_column(String(150))
+    order: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(200))
+    type: Mapped[str] = mapped_column(String(10))  # teks | video | dokumen | kuis
+    content: Mapped[str] = mapped_column(Text, default="")
+    video_url: Mapped[str] = mapped_column(String(500), default="")
+    file_url: Mapped[str] = mapped_column(String(500), default="")
+    duration: Mapped[int] = mapped_column(Integer, default=10)
+    quiz: Mapped[list] = mapped_column(JSON, default=list)  # [{q, options[], answer}]
+    is_published: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class LessonProgress(Base):
+    __tablename__ = "lesson_progress"
+    __table_args__ = (UniqueConstraint("lesson_id", "student_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    lesson_id: Mapped[int] = mapped_column(ForeignKey("lessons.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    completed_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+    quiz_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class VirtualClass(Base):
+    __tablename__ = "virtual_classes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    title: Mapped[str] = mapped_column(String(200))
+    date: Mapped[dt.date] = mapped_column(Date, index=True)
+    start_time: Mapped[str] = mapped_column(String(5))
+    end_time: Mapped[str] = mapped_column(String(5))
+    platform: Mapped[str] = mapped_column(String(30), default="Jitsi")
+    link: Mapped[str] = mapped_column(String(500), default="")
+    recording_url: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    attendee_ids: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class Discussion(Base):
+    __tablename__ = "discussions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("discussions.id", ondelete="CASCADE"), nullable=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0)
+    author: Mapped[str] = mapped_column(String(150))
+    author_role: Mapped[str] = mapped_column(String(15))
+    title: Mapped[str] = mapped_column(String(250), default="")
+    body: Mapped[str] = mapped_column(Text)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
 # Resource REST -> model (urutan = urutan aman untuk seeding karena foreign key)
 RESOURCES: dict[str, type[Base]] = {
     "settings": Setting,
@@ -415,4 +477,8 @@ RESOURCES: dict[str, type[Base]] = {
     "student_records": StudentRecord,
     "promotions": Promotion,
     "extracurriculars": Extracurricular,
+    "lessons": Lesson,
+    "lesson_progress": LessonProgress,
+    "virtual_classes": VirtualClass,
+    "discussions": Discussion,
 }

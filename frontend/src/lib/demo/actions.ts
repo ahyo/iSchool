@@ -1,7 +1,7 @@
 /* Implementasi aksi bisnis untuk mode demo (dijalankan di browser).
  * Aksi yang sama diimplementasikan di backend FastAPI: POST /api/actions/{name}. */
 import type { Applicant, Bill, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User } from '../types';
-import { getDB, insert, patch, commit, resetDB } from './store';
+import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
 import { computeFinal, nowISO, nowTime, pad, today, addDays } from '../utils';
 
@@ -242,6 +242,65 @@ export const actions: Record<string, Handler> = {
     const row = patch('extracurriculars', e.id, { member_ids: members });
     commit();
     return row;
+  },
+
+  'elearning.complete': (p: { lesson_id: number; student_id: number; answers?: number[] }, user) => {
+    const d = getDB();
+    const lesson = d.lessons.find((l) => l.id === p.lesson_id);
+    if (!lesson) throw new Error('Pelajaran tidak ditemukan');
+    if (user?.role !== 'siswa' || user.student_id !== p.student_id) throw new Error('Hanya siswa yang bersangkutan yang dapat menyelesaikan pelajaran');
+    let score: number | null = null;
+    let correct = 0;
+    if (lesson.type === 'kuis') {
+      const answers = p.answers || [];
+      if (answers.length < lesson.quiz.length || answers.some((a) => a < 0)) throw new Error('Jawab semua pertanyaan kuis terlebih dahulu');
+      correct = lesson.quiz.filter((q, i) => answers[i] === q.answer).length;
+      score = lesson.quiz.length ? Math.round((correct / lesson.quiz.length) * 100) : 0;
+    }
+    const ex = d.lesson_progress.find((x) => x.lesson_id === lesson.id && x.student_id === p.student_id);
+    const best = ex?.quiz_score != null && score != null ? Math.max(ex.quiz_score, score) : score ?? ex?.quiz_score ?? null;
+    const row = ex ? patch('lesson_progress', ex.id, { completed_at: nowISO(), quiz_score: best }) : insert('lesson_progress', { lesson_id: lesson.id, student_id: p.student_id, completed_at: nowISO(), quiz_score: score });
+    commit();
+    return { progress: row, score, correct, total: lesson.quiz.length };
+  },
+
+  'elearning.join': (p: { virtual_class_id: number; student_id: number }, user) => {
+    const vc = getDB().virtual_classes.find((v) => v.id === p.virtual_class_id);
+    if (!vc) throw new Error('Kelas virtual tidak ditemukan');
+    if (user?.role === 'siswa' && user.student_id === p.student_id && !vc.attendee_ids.includes(p.student_id)) {
+      patch('virtual_classes', vc.id, { attendee_ids: [...vc.attendee_ids, p.student_id] });
+      commit();
+    }
+    return { link: vc.link };
+  },
+
+  'discussions.post': (p: { class_id: number; subject_id: number; parent_id?: number | null; title?: string; body: string }, user) => {
+    if (!user || user.role === 'ortu') throw new Error('Anda tidak dapat mengirim diskusi');
+    if (!p.body?.trim()) throw new Error('Isi diskusi tidak boleh kosong');
+    if (!p.parent_id && !p.title?.trim()) throw new Error('Judul topik wajib diisi');
+    const row = insert('discussions', { class_id: p.class_id, subject_id: p.subject_id, parent_id: p.parent_id || null, user_id: user.id, author: user.name, author_role: user.role, title: p.title?.trim() || '', body: p.body.trim(), pinned: false, created_at: nowISO() });
+    commit();
+    return row;
+  },
+
+  'discussions.delete': (p: { id: number }, user) => {
+    const d = getDB();
+    const row = d.discussions.find((x) => x.id === p.id);
+    if (!row) throw new Error('Diskusi tidak ditemukan');
+    if (!user || (row.user_id !== user.id && !['guru', 'admin'].includes(user.role))) throw new Error('Anda tidak dapat menghapus diskusi ini');
+    d.discussions.filter((x) => x.parent_id === row.id).forEach((x) => removeRow('discussions', x.id));
+    removeRow('discussions', row.id);
+    commit();
+    return { ok: true };
+  },
+
+  'discussions.pin': (p: { id: number }, user) => {
+    const row = getDB().discussions.find((x) => x.id === p.id);
+    if (!row) throw new Error('Diskusi tidak ditemukan');
+    if (!user || !['guru', 'admin'].includes(user.role)) throw new Error('Hanya guru yang dapat menyematkan topik');
+    const out = patch('discussions', row.id, { pinned: !row.pinned });
+    commit();
+    return out;
   },
 
   'academic_years.activate': (p: { id: number }) => {

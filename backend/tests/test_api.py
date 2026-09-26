@@ -167,3 +167,71 @@ def test_promotion_graduates_students(client, auth):
     assert r.json()["processed"] == len(studs)
     after = client.get(f"/api/students/{studs[0]['id']}", headers=h).json()
     assert after["status"] == "lulus" and after["class_id"] is None
+
+
+# ------------------------------------------------------------------ e-learning
+def _my_lessons(client, h):
+    me = client.get("/api/students", headers=h).json()[0]
+    return me, client.get(f"/api/lessons?class_id={me['class_id']}", headers=h).json()
+
+
+def test_lessons_hide_quiz_key_and_drafts_for_student(client, auth):
+    me, lessons = _my_lessons(client, auth("siswa"))
+    assert lessons and all(l["is_published"] for l in lessons)
+    assert all(q["answer"] == -1 for l in lessons for q in l["quiz"])
+    staff = client.get(f"/api/lessons?class_id={me['class_id']}", headers=auth("guru")).json()
+    assert any(not l["is_published"] for l in staff)  # guru melihat draf
+    assert any(q["answer"] >= 0 for l in staff for q in l["quiz"])
+
+
+def test_complete_lesson_and_quiz_scored_on_server(client, auth):
+    h = auth("siswa")
+    me, lessons = _my_lessons(client, h)
+    text = next(l for l in lessons if l["type"] == "teks")
+    r = client.post("/api/actions/elearning.complete", headers=h, json={"lesson_id": text["id"], "student_id": me["id"]})
+    assert r.status_code == 200 and r.json()["score"] is None
+    quiz = next(l for l in lessons if l["type"] == "kuis")
+    # jawaban tidak lengkap ditolak
+    assert client.post("/api/actions/elearning.complete", headers=h, json={"lesson_id": quiz["id"], "student_id": me["id"], "answers": []}).status_code == 400
+    r = client.post("/api/actions/elearning.complete", headers=h, json={"lesson_id": quiz["id"], "student_id": me["id"], "answers": [0] * len(quiz["quiz"])})
+    body = r.json()
+    assert r.status_code == 200 and body["total"] == len(quiz["quiz"]) and 0 <= body["score"] <= 100
+    prog = client.get(f"/api/lesson_progress?lesson_id={quiz['id']}", headers=h).json()
+    assert len(prog) == 1 and prog[0]["student_id"] == me["id"]
+    # guru tidak dapat menyelesaikan pelajaran atas nama siswa
+    assert client.post("/api/actions/elearning.complete", headers=auth("guru"), json={"lesson_id": text["id"], "student_id": me["id"]}).status_code == 403
+
+
+def test_virtual_class_join_records_attendance(client, auth):
+    h = auth("siswa")
+    me = client.get("/api/students", headers=h).json()[0]
+    import datetime as dt
+    vcs = client.get(f"/api/virtual_classes?class_id={me['class_id']}", headers=h).json()
+    todays = [v for v in vcs if v["date"] == dt.date.today().isoformat()]
+    assert todays
+    r = client.post("/api/actions/elearning.join", headers=h, json={"virtual_class_id": todays[0]["id"], "student_id": me["id"]})
+    assert r.status_code == 200 and r.json()["link"].startswith("https://")
+    after = client.get(f"/api/virtual_classes/{todays[0]['id']}", headers=h).json()
+    assert me["id"] in after["attendee_ids"]
+    future = next(v for v in vcs if v["date"] > dt.date.today().isoformat())
+    assert client.post("/api/actions/elearning.join", headers=h, json={"virtual_class_id": future["id"], "student_id": me["id"]}).status_code == 400
+
+
+def test_discussion_permissions(client, auth):
+    h = auth("siswa")
+    me = client.get("/api/students", headers=h).json()[0]
+    lesson = client.get(f"/api/lessons?class_id={me['class_id']}", headers=h).json()[0]
+    course = {"class_id": me["class_id"], "subject_id": lesson["subject_id"]}
+    t = client.post("/api/actions/discussions.post", headers=h, json={**course, "title": "Tanya", "body": "Bagaimana caranya?"})
+    assert t.status_code == 200, t.text
+    reply = client.post("/api/actions/discussions.post", headers=auth("guru"), json={**course, "parent_id": t.json()["id"], "body": "Begini caranya."})
+    assert reply.status_code == 200
+    # ortu hanya membaca; siswa tidak boleh menyematkan atau menghapus milik orang lain
+    assert client.post("/api/actions/discussions.post", headers=auth("ortu"), json={**course, "title": "x", "body": "y"}).status_code == 403
+    assert client.post("/api/actions/discussions.pin", headers=h, json={"id": t.json()["id"]}).status_code == 403
+    assert client.post("/api/actions/discussions.delete", headers=h, json={"id": reply.json()["id"]}).status_code == 403
+    # siswa tidak boleh menulis langsung lewat CRUD
+    assert client.post("/api/discussions", headers=h, json={**course, "author": "x", "author_role": "guru", "body": "palsu"}).status_code == 403
+    assert client.post("/api/actions/discussions.delete", headers=h, json={"id": t.json()["id"]}).status_code == 200
+    ids = {d["id"] for d in client.get(f"/api/discussions?class_id={me['class_id']}", headers=h).json()}
+    assert t.json()["id"] not in ids and reply.json()["id"] not in ids

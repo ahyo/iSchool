@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, UserPlus, School, BookOpen, CalendarDays, Briefcase, Network, ClipboardCheck, Fingerprint,
-  FileText, NotebookPen, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
+  FileText, NotebookPen, MonitorPlay, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
   Megaphone, Settings, BarChart3, Trophy,
 } from 'lucide-react';
 import type { Role } from './types';
@@ -34,6 +34,7 @@ export const NAV: NavGroup[] = [
   { title: 'Akademik', items: [
     { href: '/kelas', label: 'Kelas & Rombel', icon: School, roles: ['admin', 'kepsek', 'kesiswaan'] },
     { href: '/mapel', label: 'Mata Pelajaran', icon: BookOpen, roles: ['admin', 'kepsek'] },
+    { href: '/elearning', label: 'E-Learning', icon: MonitorPlay, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/jadwal', label: 'Jadwal Pelajaran', icon: CalendarDays, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/materi', label: 'Materi Pelajaran', icon: FileText, roles: ['admin', 'kepsek', 'guru', 'siswa'] },
     { href: '/tugas', label: 'Tugas', icon: NotebookPen, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },

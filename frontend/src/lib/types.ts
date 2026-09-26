@@ -356,6 +356,65 @@ export interface Extracurricular {
   member_ids: number[];
 }
 
+export type LessonType = 'teks' | 'video' | 'dokumen' | 'kuis';
+
+/** Pelajaran e-learning (dikelompokkan per modul) dalam kursus kelas-mapel. */
+export interface Lesson {
+  id: number;
+  class_id: number;
+  subject_id: number;
+  teacher_id: number;
+  module: string;
+  order: number;
+  title: string;
+  type: LessonType;
+  content: string;
+  video_url: string;
+  file_url: string;
+  duration: number;
+  quiz: Question[];
+  is_published: boolean;
+  created_at: string;
+}
+
+export interface LessonProgress {
+  id: number;
+  lesson_id: number;
+  student_id: number;
+  completed_at: string;
+  quiz_score: number | null;
+}
+
+export interface VirtualClass {
+  id: number;
+  class_id: number;
+  subject_id: number;
+  teacher_id: number;
+  title: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  platform: 'Google Meet' | 'Zoom' | 'Microsoft Teams' | 'Jitsi';
+  link: string;
+  recording_url: string;
+  description: string;
+  attendee_ids: number[];
+}
+
+export interface Discussion {
+  id: number;
+  class_id: number;
+  subject_id: number;
+  parent_id: number | null;
+  user_id: number;
+  author: string;
+  author_role: Role;
+  title: string;
+  body: string;
+  pinned: boolean;
+  created_at: string;
+}
+
 export interface DB {
   settings: Settings[];
   units: Unit[];
@@ -385,6 +444,10 @@ export interface DB {
   student_records: StudentRecord[];
   promotions: Promotion[];
   extracurriculars: Extracurricular[];
+  lessons: Lesson[];
+  lesson_progress: LessonProgress[];
+  virtual_classes: VirtualClass[];
+  discussions: Discussion[];
 }
 
 export type Resource = keyof DB;
