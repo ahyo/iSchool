@@ -40,6 +40,7 @@ WRITE_ROLES: dict[str, set[str]] = {
     "book_loans": ADMIN, "book_reservations": ADMIN,  # lewat aksi library.*
     "exam_periods": {"admin", "keuangan", "kesiswaan"},
     "exam_dispensations": ADMIN, "exam_checkins": ADMIN,  # lewat aksi examcard.*
+    "exam_windows": ADMIN, "exam_attempts": ADMIN,  # lewat aksi exams.*
 }
 # Data yang tidak boleh dilihat siswa/orang tua sama sekali
 STAFF_ONLY_READ = {"applicants", "teaching_journals"}

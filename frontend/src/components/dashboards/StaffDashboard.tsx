@@ -7,6 +7,7 @@ import { useAuth, useWorkspace } from '@/lib/auth';
 import { Card, StatCard, Loading, StatusBadge, Badge, Avatar, ProgressBar } from '@/components/ui';
 import { TrendChart, BarsChart, DonutChart, STATUS_COLORS } from '@/components/charts';
 import { indexBy } from '@/lib/scope';
+import { isVerified } from '@/lib/finance';
 import { avg, compactRupiah, fmtDate, fmtDateTime, periodLabel, round, rupiah, today } from '@/lib/utils';
 
 export function StaffDashboard() {
@@ -42,7 +43,7 @@ export function StaffDashboard() {
     // Finance
     const bills = data.bills.filter((b) => (b.student_id ? !unitId || sIds.has(b.student_id) :!unitId || applicants.some((a) => a.id === b.applicant_id)));
     const billIds = new Set(bills.map((b) => b.id));
-    const payments = data.payments.filter((p) => billIds.has(p.bill_id));
+    const payments = data.payments.filter((p) => isVerified(p) && billIds.has(p.bill_id)).map((p) => ({ ...p, paid_at: p.verified_at || p.paid_at }));
     const month = today().slice(0, 7);
     const collectedMonth = payments.filter((p) => p.paid_at.startsWith(month)).reduce((a, p) => a + p.amount, 0);
     const outstanding = bills.reduce((a, b) => a + (b.amount - b.discount - b.paid_amount), 0);
@@ -65,7 +66,7 @@ export function StaffDashboard() {
     });
 
     const records = data.student_records.filter((r) => sIds.has(r.student_id));
-    const recent = [...data.payments].filter((p) => billIds.has(p.bill_id)).sort((a, b) => b.paid_at.localeCompare(a.paid_at)).slice(0, 6);
+    const recent = [...payments].sort((a, b) => b.paid_at.localeCompare(a.paid_at)).slice(0, 6);
     const arrears = new Map<number, number>();
     overdue.forEach((b) => b.student_id && arrears.set(b.student_id, (arrears.get(b.student_id) || 0) + (b.amount - b.discount - b.paid_amount)));
     const topArrears = [...arrears.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, v]) => ({ student: studentsById.get(id)!, amount: v }));

@@ -84,7 +84,9 @@ def test_public_portal_and_ppdb_flow(client, auth):
     bill = reg.json()["bill"]
     st = client.post("/api/actions/ppdb.status", json={"reg_no": app_["reg_no"], "birth_date": "2010-05-05"}).json()
     assert st["applicant"]["status"] == "baru"
-    assert client.post("/api/actions/ppdb.pay", json={"bill_id": bill["id"], "method": "QRIS"}).status_code == 200
+    pay = client.post("/api/actions/ppdb.pay", json={"bill_id": bill["id"], "method": "QRIS"}).json()
+    assert pay["status"] == "menunggu" and pay["receipt_no"] is None
+    assert client.post("/api/actions/payments.verify", headers=auth("keuangan"), json={"id": pay["id"]}).json()["status"] == "terverifikasi"
     h = auth("kesiswaan")
     client.patch(f"/api/applicants/{app_['id']}", headers=h, json={"status": "diterima", "test_score": 88})
     classes = client.get("/api/classes?unit_id=3&grade=11", headers=h).json()
@@ -103,6 +105,7 @@ def test_family_payment_and_ownership(client, auth):
     remaining = b["amount"] - b["discount"] - b["paid_amount"]
     r = client.post("/api/actions/payments.pay", headers=h, json={"bill_id": b["id"], "amount": remaining, "method": "Virtual Account"})
     assert r.status_code == 200, r.text
+    assert r.json()["status"] == "menunggu"
     # tidak boleh membayar tagihan siswa lain
     other = client.get("/api/bills?status=belum", headers=auth("admin")).json()
     own_ids = {k["id"] for k in client.get("/api/students", headers=h).json()}
@@ -121,13 +124,15 @@ def test_overpayment_rejected(client, auth):
 def test_cbt_submit_scores_on_server(client, auth):
     h = auth("siswa")
     me = client.get("/api/students", headers=h).json()[0]
-    taken = {r["exam_id"] for r in client.get("/api/exam_results", headers=h).json()}
-    # ujian non-PTS (ujian PTS terkunci selama kartu ujian belum terbit)
-    exam = next(e for e in client.get(f"/api/exams?class_id={me['class_id']}", headers=h).json() if e["id"] not in taken and e["type"] != "PTS")
-    r = client.post("/api/actions/exams.submit", headers=h, json={"exam_id": exam["id"], "student_id": me["id"], "answers": [0] * len(exam["questions"])})
+    quiz = next(e for e in client.get(f"/api/exams?class_id={me['class_id']}", headers=h).json() if e["start_time"] == "00:00" and e["type"] == "UH")
+    r = client.post("/api/actions/exams.start", headers=h, json={"exam_id": quiz["id"], "student_id": me["id"]})
     assert r.status_code == 200, r.text
-    assert 0 <= r.json()["score"] <= 100 and r.json()["total"] == len(exam["questions"])
-    again = client.post("/api/actions/exams.submit", headers=h, json={"exam_id": exam["id"], "student_id": me["id"], "answers": []})
+    attempt = r.json()["attempt"]
+    assert all(q["answer"] == -1 for q in r.json()["questions"])  # kunci jawaban tidak dikirim
+    sub = client.post("/api/actions/exams.submit", headers=h, json={"attempt_id": attempt["id"], "answers": [0] * len(quiz["questions"])})
+    assert sub.status_code == 200, sub.text
+    assert 0 <= sub.json()["score"] <= 100 and sub.json()["total"] == len(quiz["questions"])
+    again = client.post("/api/actions/exams.start", headers=h, json={"exam_id": quiz["id"], "student_id": me["id"]})
     assert again.status_code == 400
 
 
@@ -460,9 +465,15 @@ def test_exam_card_requires_payment_then_issued(client, auth):
         assert card["payload"] is None
         assert next(r for r in card["requirements"] if not r["ok"])["outstanding"] > 0
     # orang tua melunasi SPP yang kurang -> kartu terbit dengan QR
+    hk = auth("keuangan")
     for b in client.get("/api/bills", headers=ho).json():
         if b["student_id"] == me["id"] and b["status"] != "lunas" and b["period"] <= period["spp_until"]:
-            client.post("/api/actions/payments.pay", headers=ho, json={"bill_id": b["id"], "amount": b["amount"] - b["discount"] - b["paid_amount"], "method": "QRIS"})
+            pr = client.post("/api/actions/payments.pay", headers=ho, json={"bill_id": b["id"], "amount": b["amount"] - b["discount"] - b["paid_amount"], "method": "QRIS"})
+            if pr.status_code == 200:  # belum ada pembayaran menunggu untuk tagihan ini
+                client.post("/api/actions/payments.verify", headers=hk, json={"id": pr.json()["id"]})
+    for pay in client.get("/api/payments?status=menunggu", headers=hk).json():
+        if pay["student_id"] == me["id"]:
+            client.post("/api/actions/payments.verify", headers=hk, json={"id": pay["id"]})
     card = client.post("/api/actions/examcard.get", headers=hs, json={"period_id": period["id"], "student_id": me["id"]}).json()
     assert card["eligible"] and card["payload"].startswith(f"ISCHOOL-KU:{period['id']}:{me['nis']}:")
     # siswa tidak boleh melihat kartu siswa lain
@@ -555,3 +566,102 @@ def test_library_fine_paid_at_desk_recorded_as_income(client, auth):
     assert ret["fine_paid"] and ret["bill_id"]
     pays = client.get(f"/api/payments?bill_id={ret['bill_id']}", headers=hk).json()
     assert len(pays) == 1 and pays[0]["amount"] == ret["fine"] and pays[0]["method"] == "Tunai"
+
+
+
+# ------------------------------------------------------------------ verifikasi pembayaran
+def test_online_payment_pending_until_verified(client, auth):
+    hs, hk = auth("siswa"), auth("keuangan")
+    bill = next((b for b in client.get("/api/bills", headers=hs).json() if b["status"] != "lunas"), None)
+    if bill is None:  # buat tagihan baru untuk siswa demo
+        me = client.get("/api/students", headers=hs).json()[0]
+        fee = next(f for f in client.get("/api/fee_types", headers=hk).json() if f["category"] == "lainnya")
+        bill = client.post("/api/bills", headers=hk, json={"student_id": me["id"], "fee_type_id": fee["id"], "period": "2026-10", "description": "Uji verifikasi", "amount": 100000, "discount": 0, "paid_amount": 0, "due_date": "2026-10-10", "status": "belum"}).json()
+    rest = bill["amount"] - bill["discount"] - bill["paid_amount"]
+    # tunai dari siswa ditolak; transfer tanpa referensi ditolak
+    assert client.post("/api/actions/payments.pay", headers=hs, json={"bill_id": bill["id"], "amount": rest, "method": "Tunai"}).status_code == 400
+    assert client.post("/api/actions/payments.pay", headers=hs, json={"bill_id": bill["id"], "amount": rest, "method": "Transfer Bank"}).status_code == 422
+    pay = client.post("/api/actions/payments.pay", headers=hs, json={"bill_id": bill["id"], "amount": rest, "method": "Transfer Bank", "reference": "TRF-UJI-1"}).json()
+    assert pay["status"] == "menunggu" and pay["receipt_no"] is None
+    # tagihan belum berubah; pengajuan kedua melebihi sisa ditolak
+    assert client.get(f"/api/bills/{bill['id']}", headers=hs).json()["paid_amount"] == bill["paid_amount"]
+    assert client.post("/api/actions/payments.pay", headers=hs, json={"bill_id": bill["id"], "amount": rest, "method": "QRIS"}).status_code == 400
+    # siswa tidak dapat memverifikasi sendiri
+    assert client.post("/api/actions/payments.verify", headers=hs, json={"id": pay["id"]}).status_code == 403
+    rej = client.post("/api/actions/payments.reject", headers=hk, json={"id": pay["id"], "reason": "Dana belum masuk"}).json()
+    assert rej["status"] == "ditolak"
+    assert client.post("/api/actions/payments.verify", headers=hk, json={"id": pay["id"]}).status_code == 400
+    pay2 = client.post("/api/actions/payments.pay", headers=hs, json={"bill_id": bill["id"], "amount": rest, "method": "QRIS"}).json()
+    ok = client.post("/api/actions/payments.verify", headers=hk, json={"id": pay2["id"]}).json()
+    assert ok["status"] == "terverifikasi" and ok["receipt_no"].startswith("KW/")
+    assert client.get(f"/api/bills/{bill['id']}", headers=hs).json()["status"] == "lunas"
+
+
+
+# ------------------------------------------------------------------ CBT: jadwal, sisa waktu, susulan & remedial
+def _mk_exam(client, h, class_id, subject_id, teacher_id, date, start, end, duration=60, typ="UH"):
+    return client.post("/api/exams", headers=h, json={"class_id": class_id, "subject_id": subject_id, "teacher_id": teacher_id, "name": f"Uji {start}-{end}", "type": typ,
+                                                       "date": date, "start_time": start, "end_time": end, "duration": duration, "is_online": True,
+                                                       "questions": [{"q": "1+1", "options": ["1", "2", "3", "4"], "answer": 1}, {"q": "2+2", "options": ["4", "5", "6", "7"], "answer": 0}]}).json()
+
+
+def test_cbt_resume_keeps_deadline_and_answers(client, auth):
+    import datetime as dt
+    ha, hs = auth("admin"), auth("siswa")
+    me = client.get("/api/students", headers=hs).json()[0]
+    sched = client.get(f"/api/schedules?class_id={me['class_id']}", headers=ha).json()[0]
+    exam = _mk_exam(client, ha, me["class_id"], sched["subject_id"], sched["teacher_id"], dt.date.today().isoformat(), "00:00", "23:59", duration=60)
+    a1 = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": exam["id"], "student_id": me["id"]}).json()
+    client.post("/api/actions/exams.saveAnswers", headers=hs, json={"attempt_id": a1["attempt"]["id"], "answers": [1, -1]})
+    # keluar lalu buka lagi: sesi & batas waktu sama, jawaban tersimpan
+    a2 = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": exam["id"], "student_id": me["id"]}).json()
+    assert a2["attempt"]["id"] == a1["attempt"]["id"] and a2["attempt"]["deadline"] == a1["attempt"]["deadline"]
+    assert a2["attempt"]["answers"] == [1, -1]
+    # waktu habis -> dikumpulkan otomatis dengan jawaban tersimpan
+    from app.database import SessionLocal
+    from app.models import ExamAttempt
+    with SessionLocal() as db:
+        at = db.get(ExamAttempt, a1["attempt"]["id"])
+        at.deadline = dt.datetime.now() - dt.timedelta(minutes=5)
+        db.commit()
+    assert client.post("/api/actions/exams.saveAnswers", headers=hs, json={"attempt_id": a1["attempt"]["id"], "answers": [1, 0]}).status_code == 400
+    r = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": exam["id"], "student_id": me["id"]})
+    assert r.status_code == 400 and "sudah mengerjakan" in r.json()["detail"]
+    res = client.get(f"/api/exam_results?exam_id={exam['id']}", headers=hs).json()
+    assert len(res) == 1 and res[0]["score"] == 50 and res[0]["kind"] == "utama"
+
+
+def test_cbt_schedule_window_enforced(client, auth):
+    import datetime as dt
+    ha, hs = auth("admin"), auth("siswa")
+    me = client.get("/api/students", headers=hs).json()[0]
+    sched = client.get(f"/api/schedules?class_id={me['class_id']}", headers=ha).json()[0]
+    tomorrow = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    upcoming = _mk_exam(client, ha, me["class_id"], sched["subject_id"], sched["teacher_id"], tomorrow, "08:00", "10:00")
+    r = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": upcoming["id"], "student_id": me["id"]})
+    assert r.status_code == 400 and "dibuka" in r.json()["detail"]
+    closed = _mk_exam(client, ha, me["class_id"], sched["subject_id"], sched["teacher_id"], yesterday, "08:00", "10:00")
+    r = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": closed["id"], "student_id": me["id"]})
+    assert r.status_code == 400 and "ditutup" in r.json()["detail"]
+    # guru menjadwalkan susulan hari ini -> siswa bisa mengerjakan (kind susulan)
+    win = client.post("/api/actions/exams.windowCreate", headers=ha, json={"exam_id": closed["id"], "kind": "susulan", "date": dt.date.today().isoformat(), "start_time": "00:00", "end_time": "23:59", "student_ids": [me["id"]]})
+    assert win.status_code == 200, win.text
+    st = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": closed["id"], "student_id": me["id"]}).json()
+    assert st["attempt"]["kind"] == "susulan"
+    sub = client.post("/api/actions/exams.submit", headers=hs, json={"attempt_id": st["attempt"]["id"], "answers": [0, 1]}).json()
+    assert sub["score"] == 0 and sub["kind"] == "susulan"
+    # nilai < KKTP -> remedial; susulan kedua ditolak
+    assert client.post("/api/actions/exams.windowCreate", headers=ha, json={"exam_id": closed["id"], "kind": "susulan", "date": dt.date.today().isoformat(), "start_time": "00:00", "end_time": "23:59", "student_ids": [me["id"]]}).status_code == 400
+    assert client.post("/api/actions/exams.windowCreate", headers=auth("guru"), json={"exam_id": closed["id"], "kind": "remedial", "date": dt.date.today().isoformat(), "start_time": "00:00", "end_time": "23:59", "student_ids": [me["id"]]}).status_code in (200, 403)
+    rem = client.post("/api/actions/exams.windowCreate", headers=ha, json={"exam_id": closed["id"], "kind": "remedial", "date": dt.date.today().isoformat(), "start_time": "00:00", "end_time": "23:59", "student_ids": [me["id"]]})
+    if rem.status_code == 200:  # (jika belum dibuat oleh guru pengampu di atas)
+        pass
+    st2 = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": closed["id"], "student_id": me["id"]}).json()
+    assert st2["attempt"]["kind"] == "remedial"
+    r2 = client.post("/api/actions/exams.submit", headers=hs, json={"attempt_id": st2["attempt"]["id"], "answers": [1, 0]}).json()
+    assert r2["score"] == 100 and r2["kind"] == "remedial"
+    kinds = sorted(x["kind"] for x in client.get(f"/api/exam_results?exam_id={closed['id']}", headers=hs).json())
+    assert kinds == ["remedial", "susulan"]
+    # siswa tidak boleh membuat jadwal
+    assert client.post("/api/actions/exams.windowCreate", headers=hs, json={"exam_id": closed["id"], "kind": "susulan", "date": tomorrow, "start_time": "08:00", "end_time": "09:00", "student_ids": [me["id"]]}).status_code == 403

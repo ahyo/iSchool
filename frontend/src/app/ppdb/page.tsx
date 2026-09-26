@@ -7,6 +7,7 @@ import { PublicFooter, PublicNav } from '@/components/PublicNav';
 import { Badge, Button, Card, Field, Input, Loading, Modal, Select, StatusBadge, Tabs, Textarea, toast } from '@/components/ui';
 import { cn, fmtDate, gradeLabel, rupiah } from '@/lib/utils';
 import type { Applicant, Bill, Major, Payment, Settings, Unit, FeeType } from '@/lib/types';
+import { SCHOOL_BANK } from '@/lib/finance';
 
 interface Portal { settings: Settings; units: Unit[]; majors: Major[]; fee_types: FeeType[] }
 
@@ -21,7 +22,8 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 function PayModal({ bill, onClose, onPaid }: { bill: Bill | null; onClose: () => void; onPaid: () => void }) {
-  const [method, setMethod] = useState<Payment['method']>('Virtual Account');
+  const [method, setMethod] = useState<Payment['method']>('Transfer Bank');
+  const [reference, setReference] = useState('');
   const [busy, setBusy] = useState(false);
   if (!bill) return null;
   const remaining = bill.amount - bill.discount - bill.paid_amount;
@@ -31,8 +33,9 @@ function PayModal({ bill, onClose, onPaid }: { bill: Bill | null; onClose: () =>
       <Button loading={busy} onClick={async () => {
         setBusy(true);
         try {
-          await api.action('ppdb.pay', { bill_id: bill.id, method });
-          toast.success('Pembayaran berhasil (simulasi)');
+          if (method === 'Transfer Bank' && !reference.trim()) throw new Error('Isi nomor referensi / nama pengirim transfer');
+          await api.action('ppdb.pay', { bill_id: bill.id, method, reference });
+          toast.success('Pembayaran terkirim — menunggu verifikasi bagian keuangan');
           onPaid();
         } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
       }}>Bayar {rupiah(remaining)}</Button>
@@ -46,8 +49,10 @@ function PayModal({ bill, onClose, onPaid }: { bill: Bill | null; onClose: () =>
           </label>
         ))}
       </div>
+      {method === 'Transfer Bank' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">Transfer ke <b>{SCHOOL_BANK.bank}</b> no. <b className="font-mono">{SCHOOL_BANK.account}</b> a.n. {SCHOOL_BANK.holder}</p>}
       {method === 'Virtual Account' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">No. VA (simulasi): <b>8808 {String(bill.id).padStart(4, '0')} 2027 0001</b></p>}
-      <p className="mt-3 text-xs text-slate-500">Mode demo: pembayaran disimulasikan dan langsung terkonfirmasi. Di mode produksi, integrasikan dengan payment gateway (Midtrans/Xendit) melalui backend.</p>
+      <Field label={method === 'Transfer Bank' ? 'No. referensi / nama pengirim' : 'No. referensi (opsional)'} className="mt-3"><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>
+      <p className="mt-3 text-xs text-slate-500">Pembayaran diverifikasi bagian keuangan sekolah (maks. 1×24 jam kerja). Status berubah menjadi lunas setelah dana dipastikan masuk.</p>
     </Modal>
   );
 }
@@ -60,7 +65,8 @@ export default function PPDBPage() {
   const [result, setResult] = useState<{ applicant: Applicant; bill: Bill | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState({ reg_no: '', birth_date: '' });
-  const [status, setStatus] = useState<{ applicant: Applicant; bills: Bill[]; unit: Unit } | null>(null);
+  const [status, setStatus] = useState<{ applicant: Applicant; bills: Bill[]; unit: Unit; payments?: { bill_id: number; status: string; reject_reason: string }[] } | null>(null);
+  const [sentBills, setSentBills] = useState<number[]>([]);
   const [payBill, setPayBill] = useState<Bill | null>(null);
 
   useEffect(() => {
@@ -228,6 +234,8 @@ export default function PPDBPage() {
                   <p className="text-xl font-bold">{rupiah(result.bill.amount)}</p>
                   {result.bill.status === 'lunas' ? (
                     <p className="mt-3 rounded-lg bg-emerald-50 p-2 text-center text-sm font-semibold text-emerald-700">Lunas — terima kasih!</p>
+                  ) : sentBills.includes(result.bill.id) ? (
+                    <p className="mt-3 rounded-lg bg-amber-50 p-2 text-center text-sm font-semibold text-amber-700">Pembayaran terkirim — menunggu verifikasi</p>
                   ) : (
                     <Button className="mt-3 w-full" onClick={() => setPayBill(result.bill)}><CreditCard className="h-4 w-4" /> Bayar Sekarang</Button>
                   )}
@@ -277,7 +285,12 @@ export default function PPDBPage() {
                 {status.bills.map((b) => (
                   <div key={b.id} className="mt-2 flex items-center justify-between rounded-lg border border-slate-200 p-3 text-sm">
                     <div><p className="font-medium">{b.description}</p><p className="text-slate-500">{rupiah(b.amount)} · jatuh tempo {fmtDate(b.due_date)}</p></div>
-                    {b.status === 'lunas' ? <Badge tone="green">Lunas</Badge> : <Button size="sm" onClick={() => setPayBill(b)}>Bayar</Button>}
+                    {b.status === 'lunas' ? <Badge tone="green">Lunas</Badge> : status.payments?.some((x) => x.bill_id === b.id && x.status === 'menunggu') ? <Badge tone="amber">Menunggu verifikasi</Badge> : (
+                      <div className="text-right">
+                        {status.payments?.filter((x) => x.bill_id === b.id && x.status === 'ditolak').slice(-1).map((x, i) => <p key={i} className="mb-1 text-xs text-red-600">Pembayaran ditolak: {x.reject_reason}</p>)}
+                        <Button size="sm" onClick={() => setPayBill(b)}>Bayar</Button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {status.applicant.status === 'daftar_ulang' && <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Akun iSchool telah dibuat. Siswa login memakai NIS, orang tua memakai No. HP, password awal <b>demo123</b>. <Link href="/login/" className="font-semibold underline">Masuk</Link></p>}
@@ -290,7 +303,7 @@ export default function PPDBPage() {
       <PublicFooter name={data.settings.name} address={data.settings.address} phone={data.settings.phone} email={data.settings.email} />
       <PayModal bill={payBill} onClose={() => setPayBill(null)} onPaid={() => {
         setPayBill(null);
-        if (result?.bill) setResult({ ...result, bill: { ...result.bill, status: 'lunas', paid_amount: result.bill.amount } });
+        if (payBill) setSentBills((x) => [...x, payBill.id]);
         if (status) check(status.applicant.reg_no, status.applicant.birth_date);
       }} />
     </div>

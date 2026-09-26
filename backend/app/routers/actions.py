@@ -15,9 +15,10 @@ from ..database import get_db
 from ..deps import Principal, bearer, ensure_role, get_principal
 from ..models import (
     AcademicYear, Announcement, Applicant, Bill, Employee, EmployeeAttendance, Event, Exam, ExamResult,
-    Book, BookLoan, BookReservation, Discussion, ExamCheckin, ExamDispensation, ExamPeriod, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
-    Setting, Student, StudentAttendance, Submission, Unit, User, VirtualClass,
+    Book, BookLoan, BookReservation, Discussion, ExamAttempt, ExamCheckin, ExamDispensation, ExamPeriod, ExamWindow, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
+    Setting, Student, StudentAttendance, Subject, Submission, Unit, User, VirtualClass,
 )
+from ..cbt import GRACE, at, availability, effective_score
 from ..examcard import card_payload, card_token, eligibility, parse_payload, period_for_exam
 from ..importer import run_import
 from ..security import hash_password, verify_password
@@ -60,18 +61,6 @@ def receipt_no(db: Session) -> str:
     return f"{prefix}{last + 1:05d}"
 
 
-def apply_payment(db: Session, bill: Bill, amount: int, method: str, received_by: str, note: str = "") -> Payment:
-    remaining = bill.amount - bill.discount - bill.paid_amount
-    if amount <= 0:
-        raise HTTPException(400, "Nominal pembayaran tidak valid")
-    if amount > remaining:
-        raise HTTPException(400, f"Nominal melebihi sisa tagihan ({remaining:,})".replace(",", "."))
-    pay = Payment(bill_id=bill.id, student_id=bill.student_id, applicant_id=bill.applicant_id, amount=amount, method=method,
-                  receipt_no=receipt_no(db), paid_at=now(), received_by=received_by, note=note or "")
-    db.add(pay)
-    bill.paid_amount += amount
-    bill.status = "lunas" if bill.paid_amount >= bill.amount - bill.discount else "sebagian"
-    return pay
 
 
 # ------------------------------------------------------------------ public
@@ -129,8 +118,10 @@ def ppdb_status(db: Session, p: dict, user: Principal | None):
     a = db.scalars(select(Applicant).where(func.lower(Applicant.reg_no) == str(p.get("reg_no", "")).strip().lower(), Applicant.birth_date == parse_date(p.get("birth_date")))).first()
     if not a:
         raise HTTPException(404, "Data pendaftaran tidak ditemukan. Periksa nomor pendaftaran dan tanggal lahir.")
-    bills = db.scalars(select(Bill).where(Bill.applicant_id == a.id))
-    return {"applicant": to_dict(a), "bills": [to_dict(b) for b in bills], "unit": to_dict(db.get(Unit, a.unit_id))}
+    bills = list(db.scalars(select(Bill).where(Bill.applicant_id == a.id)))
+    pays = db.scalars(select(Payment).where(Payment.bill_id.in_([b.id for b in bills] or [-1])))
+    return {"applicant": to_dict(a), "bills": [to_dict(b) for b in bills], "unit": to_dict(db.get(Unit, a.unit_id)),
+            "payments": [{"bill_id": x.bill_id, "amount": x.amount, "status": x.status, "reject_reason": x.reject_reason, "paid_at": x.paid_at.isoformat()} for x in pays]}
 
 
 def ppdb_pay(db: Session, p: dict, user: Principal | None):
@@ -138,7 +129,11 @@ def ppdb_pay(db: Session, p: dict, user: Principal | None):
     if not bill or not bill.applicant_id:
         raise HTTPException(404, "Tagihan tidak ditemukan")
     # Produksi: ganti dengan pembuatan transaksi di payment gateway + callback terverifikasi.
-    pay = apply_payment(db, bill, bill.amount - bill.discount - bill.paid_amount, p.get("method") or "Virtual Account", "Pembayaran Online")
+    method = p.get("method") or "Virtual Account"
+    if method == "Transfer Bank" and not (p.get("reference") or "").strip():
+        raise HTTPException(422, "Isi nomor referensi / nama pengirim transfer")
+    pay = apply_payment(db, bill, bill.amount - bill.discount - bill.paid_amount, method, "Pembayaran Online", "Biaya pendaftaran PPDB",
+                        pending=True, reference=p.get("reference") or "", proof_url=p.get("proof_url") or "")
     db.commit()
     return to_dict(pay)
 
@@ -222,14 +217,20 @@ def payments_pay(db: Session, p: dict, user: Principal):
     bill = db.get(Bill, int(p.get("bill_id") or 0))
     if not bill:
         raise HTTPException(404, "Tagihan tidak ditemukan")
+    method = p.get("method") or "Tunai"
     if user.is_family:
         if bill.student_id not in user.student_ids:
             raise HTTPException(403, "Tagihan bukan milik Anda")
+        if method == "Tunai":
+            raise HTTPException(400, "Pembayaran tunai dilakukan di loket keuangan sekolah")
+        if method == "Transfer Bank" and not (p.get("reference") or "").strip():
+            raise HTTPException(422, "Isi nomor referensi / nama pengirim transfer")
         received_by = "Pembayaran Online"
     else:
         ensure_role(user, "admin", "keuangan")
         received_by = user.user.name
-    pay = apply_payment(db, bill, int(p.get("amount") or 0), p.get("method") or "Tunai", received_by, p.get("note") or "")
+    pay = apply_payment(db, bill, int(p.get("amount") or 0), method, received_by, p.get("note") or "",
+                        pending=user.is_family, reference=p.get("reference") or "", proof_url=p.get("proof_url") or "")
     _sync_loan_fine(db, bill)
     db.commit()
     return to_dict(pay)
@@ -316,25 +317,136 @@ def submissions_submit(db: Session, p: dict, user: Principal):
     return to_dict(row)
 
 
-def exams_submit(db: Session, p: dict, user: Principal):
-    sid = _own_student(p, user)
-    exam = db.get(Exam, int(p.get("exam_id") or 0))
-    if not exam:
-        raise HTTPException(404, "Ujian tidak ditemukan")
-    if db.scalars(select(ExamResult).where(ExamResult.exam_id == exam.id, ExamResult.student_id == sid)).first():
-        raise HTTPException(400, "Anda sudah mengerjakan ujian ini")
-    st = db.get(Student, sid)
-    period = period_for_exam(db, exam.type, exam.date, st.unit_id)
-    if period and not eligibility(db, period, st)["eligible"]:
-        raise HTTPException(403, "Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu")
-    answers = list(p.get("answers") or [])
+
+
+def _finalize_attempt(db: Session, attempt: ExamAttempt, answers: list) -> dict:
+    exam = db.get(Exam, attempt.exam_id)
     questions = exam.questions or []
     correct = sum(1 for i, q in enumerate(questions) if i < len(answers) and answers[i] == q.get("answer"))
     score = round(correct / len(questions) * 100) if questions else 0
-    row = ExamResult(exam_id=exam.id, student_id=sid, answers=answers, score=score, submitted_at=now())
+    attempt.answers, attempt.submitted_at = answers, now()
+    row = ExamResult(exam_id=exam.id, student_id=attempt.student_id, answers=answers, score=score, submitted_at=now(), kind=attempt.kind)
     db.add(row)
-    db.commit()
+    db.flush()
     return {**to_dict(row), "correct": correct, "total": len(questions)}
+
+
+def _finalize_expired(db: Session, exam_id: int, student_id: int) -> None:
+    for a in db.scalars(select(ExamAttempt).where(ExamAttempt.exam_id == exam_id, ExamAttempt.student_id == student_id, ExamAttempt.submitted_at.is_(None))):
+        if a.deadline + GRACE < now():
+            _finalize_attempt(db, a, a.answers or [])
+
+
+def _own_attempt(db: Session, p: dict, user: Principal) -> ExamAttempt:
+    a = db.get(ExamAttempt, int(p.get("attempt_id") or 0))
+    if not a or user.role != "siswa" or a.student_id not in user.student_ids:
+        raise HTTPException(404, "Sesi ujian tidak ditemukan")
+    if a.submitted_at:
+        raise HTTPException(400, "Ujian sudah dikumpulkan")
+    return a
+
+
+def exams_start(db: Session, p: dict, user: Principal):
+    sid = _own_student(p, user)
+    exam = db.get(Exam, int(p.get("exam_id") or 0))
+    st = db.get(Student, sid)
+    if not exam:
+        raise HTTPException(404, "Ujian tidak ditemukan")
+    if st.class_id != exam.class_id:
+        raise HTTPException(403, "Ujian bukan untuk kelas Anda")
+    if not exam.is_online:
+        raise HTTPException(400, "Ujian ini dilaksanakan secara luring")
+    subject = db.get(Subject, exam.subject_id)
+    kkm = subject.kkm if subject else 75
+    _finalize_expired(db, exam.id, sid)
+    db.commit()  # simpan penutupan otomatis sesi yang kedaluwarsa sebelum pengecekan berikutnya
+    av = availability(db, exam, sid, kkm, now())
+    if av["state"] == "resume":
+        attempt = av["attempt"]
+    elif av["state"] == "open":
+        s = av["session"]
+        period = period_for_exam(db, exam.type, s["date"], st.unit_id)
+        if period and not eligibility(db, period, st)["eligible"]:
+            raise HTTPException(403, "Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu")
+        deadline = min(now() + dt.timedelta(minutes=exam.duration), at(s["date"], s["end_time"]))
+        attempt = ExamAttempt(exam_id=exam.id, student_id=sid, kind=s["kind"], window_id=s["window_id"], started_at=now(), deadline=deadline,
+                              answers=[-1] * len(exam.questions or []), submitted_at=None)
+        db.add(attempt)
+    elif av["state"] == "upcoming":
+        s = av["session"]
+        raise HTTPException(400, f"Ujian dibuka {s['date']:%d-%m-%Y} pukul {s['start_time']}")
+    elif av["state"] == "done":
+        raise HTTPException(400, "Anda sudah mengerjakan ujian ini")
+    else:
+        raise HTTPException(400, av["reason"])
+    db.commit()
+    questions = [{"q": q.get("q"), "options": q.get("options"), "answer": -1} for q in exam.questions or []]
+    return {"attempt": to_dict(attempt), "questions": questions, "server_now": now().isoformat()}
+
+
+def exams_save_answers(db: Session, p: dict, user: Principal):
+    a = _own_attempt(db, p, user)
+    if a.deadline + GRACE < now():
+        raise HTTPException(400, "Waktu ujian telah habis")
+    a.answers = list(p.get("answers") or [])
+    db.commit()
+    return {"saved": True}
+
+
+def exams_submit(db: Session, p: dict, user: Principal):
+    a = _own_attempt(db, p, user)
+    # Jawaban baru diterima hingga 60 detik setelah batas waktu; setelahnya dipakai jawaban tersimpan
+    answers = list(p["answers"]) if p.get("answers") is not None and now() <= a.deadline + GRACE else (a.answers or [])
+    res = _finalize_attempt(db, a, answers)
+    db.commit()
+    return res
+
+
+def _exam_owner(db: Session, exam_id: int, user: Principal) -> Exam:
+    exam = db.get(Exam, exam_id)
+    if not exam:
+        raise HTTPException(404, "Ujian tidak ditemukan")
+    if not (user.role == "admin" or (user.role == "guru" and exam.teacher_id == user.user.employee_id)):
+        raise HTTPException(403, "Hanya guru pengampu yang dapat menjadwalkan")
+    return exam
+
+
+def exams_window_create(db: Session, p: dict, user: Principal):
+    exam = _exam_owner(db, int(p.get("exam_id") or 0), user)
+    kind = p.get("kind")
+    if kind not in ("susulan", "remedial"):
+        raise HTTPException(422, "Jenis harus susulan atau remedial")
+    date, start, end = parse_date(p.get("date")), p.get("start_time") or "", p.get("end_time") or ""
+    if not date or not start or not end or end <= start:
+        raise HTTPException(422, "Jadwal tidak valid")
+    ids = [int(x) for x in p.get("student_ids") or []]
+    if not ids:
+        raise HTTPException(422, "Pilih minimal satu siswa")
+    subject = db.get(Subject, exam.subject_id)
+    kkm = subject.kkm if subject else 75
+    for sid in ids:
+        rs = list(db.scalars(select(ExamResult).where(ExamResult.exam_id == exam.id, ExamResult.student_id == sid)))
+        st = db.get(Student, sid)
+        if not st or st.class_id != exam.class_id:
+            raise HTTPException(400, "Siswa bukan peserta ujian ini")
+        if kind == "susulan" and any(r.kind != "remedial" for r in rs):
+            raise HTTPException(400, f"{st.name} sudah mengikuti ujian")
+        if kind == "remedial" and ((effective_score(rs, kkm) if rs else kkm) >= kkm or any(r.kind == "remedial" for r in rs)):
+            raise HTTPException(400, f"{st.name} tidak memerlukan remedial")
+    w = ExamWindow(exam_id=exam.id, kind=kind, date=date, start_time=start, end_time=end, student_ids=ids, notes=p.get("notes") or "", created_by=user.user.name, created_at=now())
+    db.add(w)
+    db.commit()
+    return to_dict(w)
+
+
+def exams_window_delete(db: Session, p: dict, user: Principal):
+    w = db.get(ExamWindow, int(p.get("id") or 0))
+    if not w:
+        raise HTTPException(404, "Jadwal tidak ditemukan")
+    _exam_owner(db, w.exam_id, user)
+    db.delete(w)
+    db.commit()
+    return {"ok": True}
 
 
 def grades_save(db: Session, p: dict, user: Principal):
@@ -666,6 +778,64 @@ def _sync_loan_fine(db: Session, bill: Bill) -> None:
         loan.fine_paid = True
 
 
+def _credit_bill(bill: Bill, amount: int) -> None:
+    bill.paid_amount += amount
+    bill.status = "lunas" if bill.paid_amount >= bill.amount - bill.discount else "sebagian"
+
+
+def apply_payment(db: Session, bill: Bill, amount: int, method: str, received_by: str, note: str = "", *, pending: bool = False, reference: str = "", proof_url: str = "") -> Payment:
+    """Catat pembayaran. pending=True untuk pembayaran online (siswa/ortu/pendaftar): menunggu verifikasi keuangan."""
+    pending_sum = db.scalar(select(func.coalesce(func.sum(Payment.amount), 0)).where(Payment.bill_id == bill.id, Payment.status == "menunggu")) or 0
+    remaining = bill.amount - bill.discount - bill.paid_amount - pending_sum
+    if amount <= 0:
+        raise HTTPException(400, "Nominal pembayaran tidak valid")
+    if amount > remaining:
+        msg = "Nominal melebihi sisa tagihan setelah pembayaran yang menunggu verifikasi" if pending_sum else "Nominal melebihi sisa tagihan"
+        raise HTTPException(400, f"{msg} ({remaining:,})".replace(",", "."))
+    pay = Payment(bill_id=bill.id, student_id=bill.student_id, applicant_id=bill.applicant_id, amount=amount, method=method,
+                  receipt_no=None if pending else receipt_no(db), paid_at=now(), received_by=received_by, note=note or "",
+                  status="menunggu" if pending else "terverifikasi", reference=reference or "", proof_url=proof_url or "",
+                  verified_by="" if pending else received_by, verified_at=None if pending else now(), reject_reason="")
+    db.add(pay)
+    if not pending:
+        _credit_bill(bill, amount)
+    db.flush()
+    return pay
+
+
+def payments_verify(db: Session, p: dict, user: Principal):
+    ensure_role(user, "admin", "keuangan")
+    pay = db.get(Payment, int(p.get("id") or 0))
+    if not pay:
+        raise HTTPException(404, "Pembayaran tidak ditemukan")
+    if pay.status != "menunggu":
+        raise HTTPException(400, "Pembayaran sudah diproses")
+    bill = db.get(Bill, pay.bill_id)
+    remaining = bill.amount - bill.discount - bill.paid_amount
+    if pay.amount > remaining:
+        raise HTTPException(400, "Nominal melebihi sisa tagihan; tolak dan minta pengajuan ulang")
+    pay.status, pay.receipt_no, pay.verified_by, pay.verified_at = "terverifikasi", receipt_no(db), user.user.name, now()
+    _credit_bill(bill, pay.amount)
+    _sync_loan_fine(db, bill)
+    db.commit()
+    return to_dict(pay)
+
+
+def payments_reject(db: Session, p: dict, user: Principal):
+    ensure_role(user, "admin", "keuangan")
+    reason = (p.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, "Alasan penolakan wajib diisi")
+    pay = db.get(Payment, int(p.get("id") or 0))
+    if not pay:
+        raise HTTPException(404, "Pembayaran tidak ditemukan")
+    if pay.status != "menunggu":
+        raise HTTPException(400, "Pembayaran sudah diproses")
+    pay.status, pay.reject_reason, pay.verified_by, pay.verified_at = "ditolak", reason, user.user.name, now()
+    db.commit()
+    return to_dict(pay)
+
+
 def library_borrow(db: Session, p: dict, user: Principal):
     ensure_role(user, *LIB_STAFF)
     cfg = _settings(db)
@@ -925,7 +1095,11 @@ HANDLERS = {
     "attendance.checkout": attendance_checkout,
     "attendance.setEmployee": attendance_set_employee,
     "submissions.submit": submissions_submit,
+    "exams.start": exams_start,
+    "exams.saveAnswers": exams_save_answers,
     "exams.submit": exams_submit,
+    "exams.windowCreate": exams_window_create,
+    "exams.windowDelete": exams_window_delete,
     "grades.save": grades_save,
     "promotions.process": promotions_process,
     "academic_years.activate": academic_years_activate,
@@ -941,6 +1115,8 @@ HANDLERS = {
     "leave.submit": leave_submit,
     "leave.cancel": leave_cancel,
     "leave.review": leave_review,
+    "payments.verify": payments_verify,
+    "payments.reject": payments_reject,
     "library.borrow": library_borrow,
     "library.return": library_return,
     "library.extend": library_extend,

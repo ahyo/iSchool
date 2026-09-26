@@ -38,7 +38,7 @@ export function ReceiptModal({ payment, onClose }: { payment: Payment | null; on
           </div>
           <div className="text-right">
             <p className="text-lg font-bold">KWITANSI</p>
-            <p className="font-mono text-xs">{payment.receipt_no}</p>
+            <p className="font-mono text-xs">{payment.receipt_no || 'BELUM DIVERIFIKASI'}</p>
           </div>
         </div>
         <div className="mt-4 space-y-1.5">

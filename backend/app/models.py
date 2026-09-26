@@ -230,6 +230,7 @@ class Exam(Base):
     type: Mapped[str] = mapped_column(String(5))  # UH | PTS | PAS | PAT | US | UKK
     date: Mapped[dt.date] = mapped_column(Date)
     start_time: Mapped[str] = mapped_column(String(5), default="08:00")
+    end_time: Mapped[str] = mapped_column(String(5), default="")  # jam ujian ditutup
     duration: Mapped[int] = mapped_column(Integer, default=60)
     is_online: Mapped[bool] = mapped_column(Boolean, default=True)
     questions: Mapped[list] = mapped_column(JSON, default=list)  # [{q, options[], answer}]
@@ -237,13 +238,14 @@ class Exam(Base):
 
 class ExamResult(Base):
     __tablename__ = "exam_results"
-    __table_args__ = (UniqueConstraint("exam_id", "student_id"),)
+    __table_args__ = (UniqueConstraint("exam_id", "student_id", "kind"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
     answers: Mapped[list] = mapped_column(JSON, default=list)
     score: Mapped[float] = mapped_column(Float)
     submitted_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+    kind: Mapped[str] = mapped_column(String(10), default="utama")  # utama | susulan | remedial
 
 
 class Grade(Base):
@@ -323,10 +325,17 @@ class Payment(Base):
     applicant_id: Mapped[int | None] = mapped_column(FK("applicants.id"), nullable=True)
     amount: Mapped[int] = mapped_column(Integer)
     method: Mapped[str] = mapped_column(String(20))
-    receipt_no: Mapped[str] = mapped_column(String(30), unique=True)
+    receipt_no: Mapped[str | None] = mapped_column(String(30), unique=True, nullable=True)  # terbit saat diverifikasi
     paid_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now, index=True)
     received_by: Mapped[str] = mapped_column(String(150), default="")
     note: Mapped[str] = mapped_column(String(250), default="")
+    # Pembayaran online menunggu verifikasi bagian keuangan sebelum dihitung
+    status: Mapped[str] = mapped_column(String(15), default="terverifikasi", index=True)  # menunggu | terverifikasi | ditolak
+    reference: Mapped[str] = mapped_column(String(100), default="")
+    proof_url: Mapped[str] = mapped_column(String(500), default="")
+    verified_by: Mapped[str] = mapped_column(String(150), default="")
+    verified_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    reject_reason: Mapped[str] = mapped_column(Text, default="")
 
 
 class Announcement(Base):
@@ -607,6 +616,36 @@ class ExamCheckin(Base):
     checked_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 
+class ExamWindow(Base):
+    """Jadwal tambahan ujian susulan / remedial untuk siswa tertentu."""
+    __tablename__ = "exam_windows"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # susulan | remedial
+    date: Mapped[dt.date] = mapped_column(Date)
+    start_time: Mapped[str] = mapped_column(String(5))
+    end_time: Mapped[str] = mapped_column(String(5))
+    student_ids: Mapped[list] = mapped_column(JSON, default=list)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str] = mapped_column(String(150), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class ExamAttempt(Base):
+    """Sesi pengerjaan CBT: waktu mulai & batas selesai tersimpan sehingga sisa waktu tetap berjalan."""
+    __tablename__ = "exam_attempts"
+    __table_args__ = (UniqueConstraint("exam_id", "student_id", "kind"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(10), default="utama")
+    window_id: Mapped[int | None] = mapped_column(FK("exam_windows.id"), nullable=True)
+    started_at: Mapped[dt.datetime] = mapped_column(DateTime)
+    deadline: Mapped[dt.datetime] = mapped_column(DateTime)
+    answers: Mapped[list] = mapped_column(JSON, default=list)
+    submitted_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 # Resource REST -> model (urutan = urutan aman untuk seeding karena foreign key)
 RESOURCES: dict[str, type[Base]] = {
     "settings": Setting,
@@ -651,4 +690,6 @@ RESOURCES: dict[str, type[Base]] = {
     "exam_periods": ExamPeriod,
     "exam_dispensations": ExamDispensation,
     "exam_checkins": ExamCheckin,
+    "exam_windows": ExamWindow,
+    "exam_attempts": ExamAttempt,
 }

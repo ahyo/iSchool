@@ -85,7 +85,8 @@ export function ExamCardView({ student, period, schoolName, unitName }: { studen
   const [info, setInfo] = useState<CardInfo | null>(null);
   const [error, setError] = useState('');
   // Ambil ulang kartu hanya bila tagihan/dispensasi berubah (mis. setelah pembayaran)
-  const { data: deps } = useData(['bills', 'exam_dispensations']);
+  const { data: deps } = useData(['bills', 'exam_dispensations', 'payments']);
+  const waitingTotal = (deps?.payments || []).filter((p) => p.student_id === student.id && p.status === 'menunggu').reduce((a, p) => a + p.amount, 0);
   useEffect(() => {
     api.action<CardInfo>('examcard.get', { period_id: period.id, student_id: student.id }).then(setInfo).catch((e) => setError(e.message));
   }, [period.id, student.id, deps]);
@@ -102,6 +103,7 @@ export function ExamCardView({ student, period, schoolName, unitName }: { studen
           <p className="mt-1">Selesaikan persyaratan berikut. Kartu ber-QR akan muncul otomatis setelah pembayaran terkonfirmasi.</p>
         </div>
         <div className="mt-4"><RequirementList items={info.requirements} /></div>
+        {waitingTotal > 0 && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">Ada pembayaran {rupiah(waitingTotal)} yang sedang <b>menunggu verifikasi</b> bagian keuangan. Kartu terbit otomatis setelah pembayaran diverifikasi.</p>}
         {total > 0 && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 p-3">
             <span className="text-sm">Total yang perlu dilunasi: <b className="text-red-600">{rupiah(total)}</b></span>

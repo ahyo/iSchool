@@ -43,7 +43,7 @@ function setSession(token: string | null, user: User | null) {
 // ------------------------------------------------------------------ change bus
 const bus = new Set<(res?: string) => void>();
 /** Aksi yang hanya membaca data: tidak memicu muat-ulang koleksi (mencegah render berulang). */
-const READ_ONLY_ACTIONS = new Set(['public.portal', 'ppdb.status', 'examcard.get']);
+const READ_ONLY_ACTIONS = new Set(['public.portal', 'ppdb.status', 'examcard.get', 'exams.saveAnswers']);
 function emit(res?: string) {
   bus.forEach((fn) => fn(res));
 }

@@ -208,9 +208,39 @@ export interface Exam {
   type: 'UH' | 'PTS' | 'PAS' | 'PAT' | 'US' | 'UKK';
   date: string;
   start_time: string;
+  end_time: string; // jam ujian ditutup (tidak bisa mulai/mengerjakan setelahnya)
   duration: number;
   is_online: boolean;
   questions: Question[];
+}
+
+export type AttemptKind = 'utama' | 'susulan' | 'remedial';
+
+/** Jadwal tambahan untuk ujian susulan / remedial bagi siswa tertentu. */
+export interface ExamWindow {
+  id: number;
+  exam_id: number;
+  kind: 'susulan' | 'remedial';
+  date: string;
+  start_time: string;
+  end_time: string;
+  student_ids: number[];
+  notes: string;
+  created_by: string;
+  created_at: string;
+}
+
+/** Sesi pengerjaan CBT: waktu mulai & batas selesai dicatat agar sisa waktu tetap berjalan. */
+export interface ExamAttempt {
+  id: number;
+  exam_id: number;
+  student_id: number;
+  kind: AttemptKind;
+  window_id: number | null;
+  started_at: string;
+  deadline: string;
+  answers: number[];
+  submitted_at: string | null;
 }
 
 export interface ExamResult {
@@ -220,6 +250,7 @@ export interface ExamResult {
   answers: number[];
   score: number;
   submitted_at: string;
+  kind: AttemptKind;
 }
 
 export interface Grade {
@@ -270,10 +301,17 @@ export interface Payment {
   applicant_id: number | null;
   amount: number;
   method: 'Tunai' | 'Transfer Bank' | 'Virtual Account' | 'QRIS';
-  receipt_no: string;
+  receipt_no: string | null; // terbit saat diverifikasi
   paid_at: string;
   received_by: string;
   note: string;
+  /** Pembayaran online dari siswa/ortu/pendaftar menunggu verifikasi keuangan sebelum dihitung. */
+  status: 'menunggu' | 'terverifikasi' | 'ditolak';
+  reference: string;
+  proof_url: string;
+  verified_by: string;
+  verified_at: string | null;
+  reject_reason: string;
 }
 
 export type ApplicantStatus = 'baru' | 'verifikasi' | 'diterima' | 'ditolak' | 'daftar_ulang';
@@ -607,6 +645,8 @@ export interface DB {
   exam_periods: ExamPeriod[];
   exam_dispensations: ExamDispensation[];
   exam_checkins: ExamCheckin[];
+  exam_windows: ExamWindow[];
+  exam_attempts: ExamAttempt[];
 }
 
 export type Resource = keyof DB;

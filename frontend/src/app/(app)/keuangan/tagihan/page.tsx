@@ -1,9 +1,10 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { CreditCard, Download, FilePlus2, Layers, Pencil, QrCode, Receipt, Trash2, Wallet, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Clock, CreditCard, Download, FilePlus2, Layers, Pencil, QrCode, Trash2, Wallet, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { api, useData } from '@/lib/api';
 import { useAuth, useProfile, useWorkspace } from '@/lib/auth';
-import { Button, Card, DataTable, Field, Input, Loading, Modal, PageHeader, SearchInput, Select, StatCard, StatusBadge, Tabs, run, toast, type Column } from '@/components/ui';
+import { Badge, Button, Card, DataTable, Field, Input, Loading, Modal, PageHeader, SearchInput, Select, StatCard, StatusBadge, Tabs, run, toast, type Column } from '@/components/ui';
+import { isVerified, payableRemaining, pendingFor, SCHOOL_BANK } from '@/lib/finance';
 import { FormModal } from '@/components/FormModal';
 import { ReceiptModal } from '@/components/Receipt';
 import { indexBy, sortClasses } from '@/lib/scope';
@@ -24,25 +25,30 @@ function MyBills() {
   const { data } = useData(['bills', 'payments', 'fee_types']);
   const [tab, setTab] = useState<'tagihan' | 'riwayat'>('tagihan');
   const [pay, setPay] = useState<Bill[] | null>(null);
-  const [method, setMethod] = useState<Payment['method']>('Virtual Account');
+  const [method, setMethod] = useState<Payment['method']>('Transfer Bank');
+  const [ref, setRef] = useState({ reference: '', proof_url: '' });
   const [selected, setSelected] = useState<number[]>([]);
   const [receipt, setReceipt] = useState<Payment | null>(null);
   const [busy, setBusy] = useState(false);
   if (!data || !student) return <Loading />;
   const bills = data.bills.filter((b) => b.student_id === student.id).sort((a, b) => a.due_date.localeCompare(b.due_date));
+  const payable = (b: Bill) => payableRemaining(b, data.payments);
   const open = bills.filter((b) => b.status !== 'lunas');
   const payments = data.payments.filter((p) => p.student_id === student.id).sort((a, b) => b.paid_at.localeCompare(a.paid_at));
+  const verified = payments.filter(isVerified);
+  const waiting = payments.filter((p) => p.status === 'menunggu');
   const total = open.reduce((a, b) => a + remaining(b), 0);
-  const selTotal = open.filter((b) => selected.includes(b.id)).reduce((a, b) => a + remaining(b), 0);
+  const selTotal = open.filter((b) => selected.includes(b.id)).reduce((a, b) => a + payable(b), 0);
 
   const doPay = async () => {
     if (!pay) return;
     setBusy(true);
     await run(async () => {
-      for (const b of pay) await api.action('payments.pay', { bill_id: b.id, amount: remaining(b), method });
+      for (const b of pay) await api.action('payments.pay', { bill_id: b.id, amount: payable(b), method, reference: ref.reference, proof_url: ref.proof_url });
       setPay(null);
       setSelected([]);
-    }, 'Pembayaran berhasil dikonfirmasi');
+      setRef({ reference: '', proof_url: '' });
+    }, 'Pembayaran terkirim — menunggu verifikasi bagian keuangan');
     setBusy(false);
   };
 
@@ -51,29 +57,33 @@ function MyBills() {
       <PageHeader title="Tagihan & Pembayaran" subtitle={`${student.name} · NIS ${student.nis}`} />
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Total Tagihan Aktif" value={rupiah(total)} icon={Wallet} tone="red" hint={`${open.length} tagihan`} />
-        <StatCard label="Jatuh Tempo Terlewat" value={open.filter((b) => b.due_date < today()).length} icon={AlertTriangle} tone="amber" />
-        <StatCard label="Sudah Dibayar (TA ini)" value={rupiah(payments.reduce((a, p) => a + p.amount, 0))} icon={CheckCircle2} tone="green" />
-        <StatCard label="Transaksi" value={payments.length} icon={Receipt} tone="blue" />
+        <StatCard label="Menunggu Verifikasi" value={rupiah(waiting.reduce((a, p) => a + p.amount, 0))} icon={Clock} tone="amber" hint={`${waiting.length} pembayaran`} />
+        <StatCard label="Sudah Dibayar (terverifikasi)" value={rupiah(verified.reduce((a, p) => a + p.amount, 0))} icon={CheckCircle2} tone="green" />
+        <StatCard label="Jatuh Tempo Terlewat" value={open.filter((b) => b.due_date < today()).length} icon={AlertTriangle} tone="red" />
       </div>
-      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'tagihan', label: 'Tagihan' }, { value: 'riwayat', label: 'Riwayat Pembayaran' }]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ value: 'tagihan', label: 'Tagihan' }, { value: 'riwayat', label: `Riwayat Pembayaran${waiting.length ? ` (${waiting.length} menunggu)` : ''}` }]} />
       {tab === 'tagihan' ? (
-        <Card actions={selected.length > 0 && <Button onClick={() => setPay(open.filter((b) => selected.includes(b.id)))}><CreditCard className="h-4 w-4" /> Bayar {selected.length} tagihan ({rupiah(selTotal)})</Button>} title="Daftar Tagihan">
+        <Card actions={selected.length > 0 && <Button onClick={() => setPay(open.filter((b) => selected.includes(b.id) && payable(b) > 0))}><CreditCard className="h-4 w-4" /> Bayar {selected.length} tagihan ({rupiah(selTotal)})</Button>} title="Daftar Tagihan">
           <div className="divide-y divide-slate-100">
-            {bills.map((b) => (
-              <div key={b.id} className="flex flex-wrap items-center gap-3 py-3">
-                {b.status !== 'lunas' ? <input type="checkbox" className="h-4 w-4" checked={selected.includes(b.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, b.id] : selected.filter((x) => x !== b.id))} /> : <span className="w-4" />}
-                <div className="min-w-[200px] flex-1">
-                  <p className="font-medium">{b.description}</p>
-                  <p className={cn('text-xs', b.status !== 'lunas' && b.due_date < today() ? 'text-red-600' : 'text-slate-500')}>Jatuh tempo {fmtDate(b.due_date)}{b.discount > 0 && ` · potongan ${rupiah(b.discount)}`}</p>
+            {bills.map((b) => {
+              const pend = pendingFor(b.id, data.payments);
+              const canPay = b.status !== 'lunas' && payable(b) > 0;
+              return (
+                <div key={b.id} className="flex flex-wrap items-center gap-3 py-3">
+                  {canPay ? <input type="checkbox" className="h-4 w-4" checked={selected.includes(b.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, b.id] : selected.filter((x) => x !== b.id))} /> : <span className="w-4" />}
+                  <div className="min-w-[200px] flex-1">
+                    <p className="font-medium">{b.description}</p>
+                    <p className={cn('text-xs', b.status !== 'lunas' && b.due_date < today() ? 'text-red-600' : 'text-slate-500')}>Jatuh tempo {fmtDate(b.due_date)}{b.discount > 0 && ` · potongan ${rupiah(b.discount)}`}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">{rupiah(b.status === 'lunas' ? b.amount - b.discount : remaining(b))}</p>
+                    {b.status === 'sebagian' && <p className="text-xs text-slate-500">dibayar {rupiah(b.paid_amount)}</p>}
+                  </div>
+                  {pend.length > 0 ? <Badge tone="amber"><Clock className="mr-1 h-3 w-3" />Menunggu verifikasi</Badge> : <StatusBadge status={b.status} />}
+                  {canPay && <Button size="sm" onClick={() => setPay([b])}>Bayar</Button>}
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold">{rupiah(b.status === 'lunas' ? b.amount - b.discount : remaining(b))}</p>
-                  {b.status === 'sebagian' && <p className="text-xs text-slate-500">dibayar {rupiah(b.paid_amount)}</p>}
-                </div>
-                <StatusBadge status={b.status} />
-                {b.status !== 'lunas' && <Button size="sm" onClick={() => setPay([b])}>Bayar</Button>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       ) : (
@@ -81,28 +91,38 @@ function MyBills() {
           <div className="divide-y divide-slate-100">
             {payments.map((p) => (
               <div key={p.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-                <div className="flex-1"><p className="font-medium">{data.bills.find((b) => b.id === p.bill_id)?.description}</p><p className="text-xs text-slate-500">{p.receipt_no} · {p.method} · {fmtDateTime(p.paid_at)}</p></div>
-                <span className="font-semibold text-emerald-600">{rupiah(p.amount)}</span>
-                <Button size="sm" variant="secondary" onClick={() => setReceipt(p)}>Kwitansi</Button>
+                <div className="flex-1">
+                  <p className="font-medium">{data.bills.find((b) => b.id === p.bill_id)?.description}</p>
+                  <p className="text-xs text-slate-500">{p.receipt_no ? `${p.receipt_no} · ` : ''}{p.method}{p.reference && ` · ref ${p.reference}`} · {fmtDateTime(p.paid_at)}</p>
+                  {p.status === 'ditolak' && <p className="text-xs text-red-600">Ditolak: {p.reject_reason}. Silakan ajukan ulang.</p>}
+                </div>
+                <span className={cn('font-semibold', p.status === 'ditolak' ? 'text-slate-400 line-through' : 'text-emerald-600')}>{rupiah(p.amount)}</span>
+                {p.status === 'menunggu' ? <Badge tone="amber">Menunggu verifikasi</Badge> : p.status === 'ditolak' ? <Badge tone="red">Ditolak</Badge> : <Button size="sm" variant="secondary" onClick={() => setReceipt(p)}>Kwitansi</Button>}
               </div>
             ))}
           </div>
+          {!payments.length && <p className="py-8 text-center text-sm text-slate-400">Belum ada pembayaran</p>}
         </Card>
       )}
-      <Modal open={!!pay} onClose={() => setPay(null)} title="Pembayaran Online" size="sm" footer={<><Button variant="secondary" onClick={() => setPay(null)}>Batal</Button><Button loading={busy} onClick={doPay}>Konfirmasi Bayar</Button></>}>
+      <Modal open={!!pay} onClose={() => setPay(null)} title="Pembayaran Online" size="sm" footer={<><Button variant="secondary" onClick={() => setPay(null)}>Batal</Button><Button loading={busy} disabled={method === 'Transfer Bank' && !ref.reference.trim()} onClick={doPay}>Kirim Pembayaran</Button></>}>
         {pay && (
           <>
-            <ul className="mb-3 space-y-1 text-sm">{pay.map((b) => <li key={b.id} className="flex justify-between"><span>{b.description}</span><span>{rupiah(remaining(b))}</span></li>)}</ul>
-            <p className="flex justify-between border-t pt-2 font-bold"><span>Total</span><span>{rupiah(pay.reduce((a, b) => a + remaining(b), 0))}</span></p>
+            <ul className="mb-3 space-y-1 text-sm">{pay.map((b) => <li key={b.id} className="flex justify-between gap-2"><span>{b.description}</span><span>{rupiah(payable(b))}</span></li>)}</ul>
+            <p className="flex justify-between border-t pt-2 font-bold"><span>Total</span><span>{rupiah(pay.reduce((a, b) => a + payable(b), 0))}</span></p>
             <div className="mt-4 space-y-2">
-              {(['Virtual Account', 'QRIS', 'Transfer Bank'] as Payment['method'][]).map((m) => (
+              {(['Transfer Bank', 'Virtual Account', 'QRIS'] as Payment['method'][]).map((m) => (
                 <label key={m} className={cn('flex cursor-pointer items-center gap-3 rounded-lg border p-3 text-sm', method === m ? 'border-brand-500 bg-brand-50' : 'border-slate-200')}>
                   <input type="radio" checked={method === m} onChange={() => setMethod(m)} /> {m === 'QRIS' && <QrCode className="h-4 w-4" />} {m}
                 </label>
               ))}
             </div>
+            {method === 'Transfer Bank' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">Transfer ke <b>{SCHOOL_BANK.bank}</b><br />No. rekening <b className="font-mono">{SCHOOL_BANK.account}</b> a.n. {SCHOOL_BANK.holder}</p>}
             {method === 'Virtual Account' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">No. VA: <b className="font-mono">8808 0{student.nis}</b> (BSI/BNI/Mandiri)</p>}
-            <p className="mt-3 text-xs text-slate-500">Mode demo: pembayaran langsung terkonfirmasi. Produksi: callback payment gateway ke backend.</p>
+            <div className="mt-3 space-y-3">
+              <Field label={method === 'Transfer Bank' ? 'No. referensi / nama pengirim' : 'No. referensi transaksi (opsional)'} required={method === 'Transfer Bank'}><Input value={ref.reference} onChange={(e) => setRef({ ...ref, reference: e.target.value })} placeholder="mis. TRF-BSI-12345 / a.n. Hendra Pratama" /></Field>
+              <Field label="Tautan bukti pembayaran (opsional)" hint="Foto/tangkapan layar bukti di Google Drive, dll."><Input value={ref.proof_url} onChange={(e) => setRef({ ...ref, proof_url: e.target.value })} /></Field>
+            </div>
+            <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Pembayaran akan diperiksa bagian keuangan. Status tagihan menjadi <b>lunas</b> setelah dana dipastikan masuk dan diverifikasi.</p>
           </>
         )}
       </Modal>
@@ -115,7 +135,7 @@ function MyBills() {
 function StaffBills() {
   const { user } = useAuth();
   const { unitId } = useWorkspace();
-  const { data } = useData(['bills', 'students', 'classes', 'fee_types', 'applicants', 'units']);
+  const { data } = useData(['bills', 'students', 'classes', 'fee_types', 'applicants', 'units', 'payments']);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [period, setPeriod] = useState('');
@@ -164,7 +184,7 @@ function StaffBills() {
     { key: 'paid_amount', header: 'Dibayar', className: 'text-right', render: (b) => rupiah(b.paid_amount) },
     { key: 'sisa', header: 'Sisa', className: 'text-right', sortValue: remaining, render: (b) => <b className={remaining(b) > 0 ? 'text-red-600' : ''}>{rupiah(remaining(b))}</b> },
     { key: 'due_date', header: 'Jatuh Tempo', render: (b) => <span className={b.status !== 'lunas' && b.due_date < today() ? 'font-semibold text-red-600' : ''}>{fmtDate(b.due_date)}</span> },
-    { key: 'status', header: 'Status', render: (b) => <StatusBadge status={b.status} /> },
+    { key: 'status', header: 'Status', render: (b) => (pendingFor(b.id, data.payments).length ? <Badge tone="amber">Menunggu verifikasi</Badge> : <StatusBadge status={b.status} />) },
     { key: 'a', header: '', render: (b) => canEdit && (
       <div className="flex justify-end gap-1">
         {b.status !== 'lunas' && <Button size="sm" onClick={() => { setPayBill(b); setPayForm({ amount: String(remaining(b)), method: 'Tunai', note: '' }); }}>Bayar</Button>}

@@ -6,6 +6,7 @@ import { useWorkspace } from '@/lib/auth';
 import { Button, Card, Input, Loading, PageHeader, ProgressBar, StatCard } from '@/components/ui';
 import { BarsChart, DonutChart } from '@/components/charts';
 import { indexBy, sortClasses } from '@/lib/scope';
+import { isVerified } from '@/lib/finance';
 import { compactRupiah, downloadCSV, periodLabel, round, rupiah, today } from '@/lib/utils';
 
 export default function LaporanPage() {
@@ -21,7 +22,7 @@ export default function LaporanPage() {
     const unitOf = (b: { student_id: number | null; applicant_id: number | null }) => (b.student_id ? st.get(b.student_id)?.unit_id : ap.get(b.applicant_id || 0)?.unit_id);
     const bills = data.bills.filter((b) => !unitId || unitOf(b) === unitId);
     const billIdx = indexBy(bills);
-    const pays = data.payments.filter((p) => billIdx.has(p.bill_id) && p.paid_at.startsWith(year));
+    const pays = data.payments.filter((p) => isVerified(p) && billIdx.has(p.bill_id) && (p.verified_at || p.paid_at).startsWith(year)).map((p) => ({ ...p, paid_at: p.verified_at || p.paid_at }));
 
     const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
     const monthly = months.map((m) => ({ label: periodLabel(m).slice(0, 3), value: pays.filter((p) => p.paid_at.startsWith(m)).reduce((a, p) => a + p.amount, 0) }));

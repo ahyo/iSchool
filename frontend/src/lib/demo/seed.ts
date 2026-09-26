@@ -2,7 +2,7 @@ import type {
   DB, Unit, Employee, Subject, SchoolClass, Student, Guardian, Schedule, StudentAttendance,
   EmployeeAttendance, Grade, FeeType, Bill, Payment, Applicant, Announcement, EventItem,
   StudentRecord, Material, Assignment, Submission, Exam, ExamResult, Question, Major, User,
-  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal, Book, BookLoan, BookReservation, ExamPeriod,
+  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal, Book, BookLoan, BookReservation, ExamPeriod, ExamWindow,
 } from '../types';
 import { addDays, isWeekend, today, pad, computeFinal } from '../utils';
 
@@ -434,7 +434,8 @@ export function buildSeed(): DB {
   fee_types.push({ id: ++ftid, unit_id: null, name: 'Seragam Sekolah (1 stel)', category: 'lainnya', amount: 450000, description: 'Pembelian seragam tambahan' });
 
   const bills: Bill[] = [];
-  const payments: Payment[] = [];
+type SeedPayment = Omit<Payment, 'status' | 'reference' | 'proof_url' | 'verified_by' | 'verified_at' | 'reject_reason'>;
+  const payments: SeedPayment[] = [];
   let bid = 0;
   let pid = 0;
   let receipt = 0;
@@ -534,13 +535,13 @@ export function buildSeed(): DB {
       }
       // Exams
       const qs = questionsFor(sub.code);
-      const done: Exam = { id: ++exid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, name: `Ulangan Harian 1 ${sub.name}`, type: 'UH', date: addDays(TODAY, -int(5, 15)), start_time: '08:00', duration: 45, is_online: true, questions: qs };
-      const soon: Exam = { id: ++exid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, name: `Penilaian Tengah Semester ${sub.name}`, type: 'PTS', date: addDays(TODAY, int(0, 10)), start_time: '08:00', duration: 60, is_online: true, questions: qs };
+      const done: Exam = { id: ++exid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, name: `Ulangan Harian 1 ${sub.name}`, type: 'UH', date: addDays(TODAY, -int(5, 15)), start_time: '08:00', end_time: '09:30', duration: 45, is_online: true, questions: qs };
+      const soon: Exam = { id: ++exid, class_id: c.id, subject_id: sub.id, teacher_id: teacher, name: `Penilaian Tengah Semester ${sub.name}`, type: 'PTS', date: addDays(TODAY, int(0, 10)), start_time: '07:30', end_time: '12:00', duration: 60, is_online: true, questions: qs };
       exams.push(done, soon);
       for (const s of members) {
         const answers = qs.map((q) => (rand() < 0.75 ? q.answer : int(0, 3)));
         const correct = answers.filter((a, i) => a === qs[i].answer).length;
-        exam_results.push({ id: ++erid, exam_id: done.id, student_id: s.id, answers, score: Math.round((correct / qs.length) * 100), submitted_at: `${done.date}T08:40:00` });
+        exam_results.push({ id: ++erid, exam_id: done.id, student_id: s.id, answers, score: Math.round((correct / qs.length) * 100), submitted_at: `${done.date}T08:40:00`, kind: 'utama' });
       }
     }
   }
@@ -548,7 +549,7 @@ export function buildSeed(): DB {
   // Kuis CBT yang bisa langsung dicoba oleh akun demo siswa hari ini
   {
     const mtk = subjects.find((s) => s.unit_id === 3 && s.code === 'MTK')!;
-    exams.push({ id: ++exid, class_id: demoClass.id, subject_id: mtk.id, teacher_id: subjectTeacher[mtk.id], name: 'Kuis Harian Matematika (CBT)', type: 'UH', date: TODAY, start_time: '07:30', duration: 20, is_online: true, questions: [...questionsFor('MTK'), ...questionsFor('UMUM').slice(0, 3)] });
+    exams.push({ id: ++exid, class_id: demoClass.id, subject_id: mtk.id, teacher_id: subjectTeacher[mtk.id], name: 'Kuis Harian Matematika (CBT)', type: 'UH', date: TODAY, start_time: '00:00', end_time: '23:59', duration: 20, is_online: true, questions: [...questionsFor('MTK'), ...questionsFor('UMUM').slice(0, 3)] });
   }
 
   // ---------- E-Learning: pelajaran, progres, kelas virtual, diskusi ----------
@@ -912,6 +913,29 @@ export function buildSeed(): DB {
   sept.status = 'belum';
   payments.forEach((p, i) => (p.id = i + 1));
 
+  // ---------- Status verifikasi pembayaran ----------
+  const allPayments: Payment[] = payments.map((p) => ({ ...p, status: 'terverifikasi', reference: '', proof_url: '', verified_by: p.received_by === 'Pembayaran Online' || p.received_by === 'Sistem PPDB' ? bendahara.name : p.received_by, verified_at: p.paid_at, reject_reason: '' }));
+  // Contoh pembayaran online yang menunggu verifikasi bagian keuangan
+  const sppIdSet = new Set(fee_types.filter((f) => f.category === 'bulanan').map((f) => f.id));
+  const waiting = bills.filter((b) => b.student_id && b.student_id !== demoStudent.id && b.student_id !== sibling.id && sppIdSet.has(b.fee_type_id) && b.status === 'belum' && b.period === '2026-09').slice(0, 4);
+  waiting.forEach((b, i) => {
+    const method: Payment['method'] = i % 2 ? 'QRIS' : 'Transfer Bank';
+    allPayments.push({ id: allPayments.length + 1, bill_id: b.id, student_id: b.student_id, applicant_id: null, amount: b.amount - b.discount, method, receipt_no: null, paid_at: `${addDays(TODAY, -(i % 2))}T${pad(19 + i)}:1${i}:00`, received_by: 'Pembayaran Online', note: 'Pembayaran SPP September', status: 'menunggu', reference: method === 'QRIS' ? `QR${900000 + i * 77}` : `TRF-BSI-${20260900 + i * 13}`, proof_url: 'https://drive.google.com/file/d/contoh-bukti-transfer/view', verified_by: '', verified_at: null, reject_reason: '' });
+  });
+
+  // ---------- Susulan & remedial (skenario akun siswa demo) ----------
+  const exam_windows: ExamWindow[] = [];
+  const demoUH = (code: string) => exams.find((e) => e.class_id === demoClass.id && e.type === 'UH' && e.date < TODAY && subjects.find((x) => x.id === e.subject_id)?.code === code)!;
+  const missed = demoUH('INF');
+  const idx = exam_results.findIndex((r) => r.exam_id === missed.id && r.student_id === demoStudent.id);
+  if (idx >= 0) exam_results.splice(idx, 1);
+  exam_windows.push({ id: 1, exam_id: missed.id, kind: 'susulan', date: TODAY, start_time: '00:00', end_time: '23:59', student_ids: [demoStudent.id], notes: 'Susulan karena sakit saat ulangan', created_by: unitTeachers[3][0].name, created_at: `${addDays(TODAY, -1)}T14:00:00` });
+  const lowEx = demoUH('BIG');
+  const low = exam_results.find((r) => r.exam_id === lowEx.id && r.student_id === demoStudent.id)!;
+  low.score = 60;
+  const belowKkm = exam_results.filter((r) => r.exam_id === lowEx.id && r.score < 75).map((r) => r.student_id);
+  exam_windows.push({ id: 2, exam_id: lowEx.id, kind: 'remedial', date: TODAY, start_time: '00:00', end_time: '23:59', student_ids: [...new Set([demoStudent.id, ...belowKkm])], notes: 'Remedial untuk nilai di bawah KKTP', created_by: employees.find((e) => e.id === lowEx.teacher_id)!.name, created_at: `${addDays(TODAY, -1)}T14:30:00` });
+
   return {
     settings: [{
       id: 1, name: 'Yayasan Pendidikan Nusantara Cendekia', foundation: 'Yayasan Nusantara Cendekia', address: 'Jl. Pendidikan No. 1-5, Kebayoran Baru, Jakarta Selatan 12110',
@@ -922,11 +946,11 @@ export function buildSeed(): DB {
     }],
     units, academic_years, users, employees, majors, subjects, classes, guardians, students, schedules,
     student_attendance, employee_attendance, materials, assignments, submissions, exams, exam_results, grades,
-    fee_types, bills, payments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
+    fee_types, bills, payments: allPayments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
     lessons, lesson_progress, virtual_classes, discussions, enrollments,
     expenses, leave_requests, teaching_journals, books, book_loans, book_reservations,
-    exam_periods, exam_dispensations: [], exam_checkins: [],
+    exam_periods, exam_dispensations: [], exam_checkins: [], exam_windows, exam_attempts: [],
   };
 }
 
-export const SEED_VERSION = 4;
+export const SEED_VERSION = 5;

@@ -6,6 +6,7 @@ import { useAuth, useWorkspace } from '@/lib/auth';
 import { Badge, Button, Card, DataTable, Input, Loading, PageHeader, SearchInput, Select, StatCard, run, type Column } from '@/components/ui';
 import { FormModal } from '@/components/FormModal';
 import { DonutChart } from '@/components/charts';
+import { isVerified } from '@/lib/finance';
 import { compactRupiah, downloadCSV, fmtDate, nowISO, rupiah, today } from '@/lib/utils';
 import type { Expense, ExpenseCategory } from '@/lib/types';
 
@@ -24,7 +25,7 @@ export default function PengeluaranPage() {
   if (!data) return <Loading />;
   const rows = scoped.filter((e) => (!month || e.date.startsWith(month)) && (!category || e.category === category) && (!q || e.description.toLowerCase().includes(q.toLowerCase()))).sort((a, b) => b.date.localeCompare(a.date));
   const total = rows.reduce((a, e) => a + e.amount, 0);
-  const income = data.payments.filter((p) => p.paid_at.startsWith(month)).reduce((a, p) => a + p.amount, 0);
+  const income = data.payments.filter((p) => isVerified(p) && (p.verified_at || p.paid_at).startsWith(month)).reduce((a, p) => a + p.amount, 0);
   const byCat = EXPENSE_CATEGORIES.map((c) => ({ name: c, value: rows.filter((e) => e.category === c).reduce((a, e) => a + e.amount, 0) })).filter((x) => x.value > 0).sort((a, b) => b.value - a.value);
   const unitCode = (id: number | null) => (id ? data.units.find((u) => u.id === id)?.code : 'Yayasan');
 

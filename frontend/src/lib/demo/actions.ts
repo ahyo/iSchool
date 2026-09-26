@@ -6,28 +6,42 @@ import { DEMO_PASSWORD } from './seed';
 import { runImport } from './importer';
 import { availableCopies, lateDays, LIB_STAFF } from '../library';
 import { demoToken, examEligibility, parseCardPayload, periodForExam, QR_PREFIX } from '../examcard';
+import { at, availability, effectiveScore } from '../cbt';
 import type { ImportKind } from '../importSpec';
-import { computeFinal, nowISO, nowTime, pad, today, addDays, isWeekend } from '../utils';
+import { computeFinal, fmtDate, nowISO, nowTime, pad, today, addDays, isWeekend } from '../utils';
 
 type Handler = (p: any, user: User | null) => unknown;
 
 /** Nomor kwitansi berurutan per bulan: urutan tertinggi bulan ini + 1 (aman walau ada data terhapus). */
 function receiptNo() {
   const prefix = `KW/${today().slice(0, 7).replace('-', '')}/`;
-  const last = getDB().payments.filter((p) => p.receipt_no.startsWith(prefix)).reduce((m, p) => Math.max(m, Number(p.receipt_no.slice(prefix.length)) || 0), 0);
+  const last = getDB().payments.filter((p) => p.receipt_no?.startsWith(prefix)).reduce((m, p) => Math.max(m, Number(p.receipt_no!.slice(prefix.length)) || 0), 0);
   return `${prefix}${pad(last + 1, 5)}`;
 }
 
-function applyPayment(bill: Bill, amount: number, method: Payment['method'], receivedBy: string, note = '') {
-  const remaining = bill.amount - bill.discount - bill.paid_amount;
+/** Tambahkan pembayaran terverifikasi ke tagihan (paid_amount & status). */
+function creditBill(bill: Bill, amount: number) {
+  const cur = getDB().bills.find((b) => b.id === bill.id)!;
+  const paid = cur.paid_amount + amount;
+  patch('bills', cur.id, { paid_amount: paid, status: paid >= cur.amount - cur.discount ? 'lunas' : 'sebagian' });
+}
+
+/**
+ * Catat pembayaran. pending=true untuk pembayaran online (siswa/ortu/pendaftar):
+ * disimpan "menunggu" dan baru dihitung setelah diverifikasi bagian keuangan.
+ */
+function applyPayment(bill: Bill, amount: number, method: Payment['method'], receivedBy: string, note = '', opts: { pending?: boolean; reference?: string; proof_url?: string; verifiedBy?: string } = {}) {
+  const pendingSum = getDB().payments.filter((p) => p.bill_id === bill.id && p.status === 'menunggu').reduce((a, p) => a + p.amount, 0);
+  const remaining = bill.amount - bill.discount - bill.paid_amount - pendingSum;
   if (amount <= 0) throw new Error('Nominal pembayaran tidak valid');
-  if (amount > remaining) throw new Error(`Nominal melebihi sisa tagihan (${remaining.toLocaleString('id-ID')})`);
+  if (amount > remaining) throw new Error(pendingSum ? `Nominal melebihi sisa tagihan setelah pembayaran yang menunggu verifikasi (${remaining.toLocaleString('id-ID')})` : `Nominal melebihi sisa tagihan (${remaining.toLocaleString('id-ID')})`);
   const payment = insert('payments', {
     bill_id: bill.id, student_id: bill.student_id, applicant_id: bill.applicant_id, amount, method,
-    receipt_no: receiptNo(), paid_at: nowISO(), received_by: receivedBy, note,
+    receipt_no: opts.pending ? null : receiptNo(), paid_at: nowISO(), received_by: receivedBy, note,
+    status: opts.pending ? 'menunggu' : 'terverifikasi', reference: opts.reference || '', proof_url: opts.proof_url || '',
+    verified_by: opts.pending ? '' : opts.verifiedBy || receivedBy, verified_at: opts.pending ? null : nowISO(), reject_reason: '',
   });
-  const paid = bill.paid_amount + amount;
-  patch('bills', bill.id, { paid_amount: paid, status: paid >= bill.amount - bill.discount ? 'lunas' : 'sebagian' });
+  if (!opts.pending) creditBill(bill, amount);
   return payment;
 }
 
@@ -69,6 +83,26 @@ function syncLoanFine(billId: number) {
   const bill = d.bills.find((b) => b.id === billId);
   const loan = d.book_loans.find((l) => l.bill_id === billId);
   if (bill && loan && bill.status === 'lunas' && !loan.fine_paid) patch('book_loans', loan.id, { fine_paid: true });
+}
+
+const toLocalISO = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+/** Nilai & simpan hasil sebuah sesi CBT. */
+function finalizeAttempt(attemptId: number, answers: number[]) {
+  const d = getDB();
+  const a = d.exam_attempts.find((x) => x.id === attemptId)!;
+  const exam = d.exams.find((e) => e.id === a.exam_id)!;
+  const correct = exam.questions.filter((q, i) => answers[i] === q.answer).length;
+  const score = exam.questions.length ? Math.round((correct / exam.questions.length) * 100) : 0;
+  patch('exam_attempts', a.id, { answers, submitted_at: nowISO() });
+  const row = insert('exam_results', { exam_id: exam.id, student_id: a.student_id, answers, score, submitted_at: nowISO(), kind: a.kind });
+  return { ...row, correct, total: exam.questions.length };
+}
+
+/** Sesi yang melewati batas waktu dikumpulkan otomatis dengan jawaban tersimpan. */
+function finalizeExpired(examId: number, studentId: number, now: Date) {
+  getDB().exam_attempts.filter((a) => a.exam_id === examId && a.student_id === studentId && !a.submitted_at && new Date(a.deadline).getTime() + 60000 < now.getTime())
+    .forEach((a) => finalizeAttempt(a.id, a.answers));
 }
 
 export const actions: Record<string, Handler> = {
@@ -120,13 +154,14 @@ export const actions: Record<string, Handler> = {
     const a = d.applicants.find((x) => x.reg_no.toLowerCase() === String(p.reg_no).trim().toLowerCase() && x.birth_date === p.birth_date);
     if (!a) throw new Error('Data pendaftaran tidak ditemukan. Periksa nomor pendaftaran dan tanggal lahir.');
     const bills = d.bills.filter((b) => b.applicant_id === a.id);
-    return { applicant: a, bills, unit: d.units.find((u) => u.id === a.unit_id) };
+    const payments = d.payments.filter((x) => bills.some((b) => b.id === x.bill_id)).map((x) => ({ bill_id: x.bill_id, amount: x.amount, status: x.status, reject_reason: x.reject_reason, paid_at: x.paid_at }));
+    return { applicant: a, bills, payments, unit: d.units.find((u) => u.id === a.unit_id) };
   },
 
-  'ppdb.pay': (p: { bill_id: number; method: Payment['method'] }) => {
+  'ppdb.pay': (p: { bill_id: number; method: Payment['method']; reference?: string; proof_url?: string }) => {
     const bill = getDB().bills.find((b) => b.id === p.bill_id);
-    if (!bill) throw new Error('Tagihan tidak ditemukan');
-    const pay = applyPayment(bill, bill.amount - bill.discount - bill.paid_amount, p.method, 'Pembayaran Online');
+    if (!bill || !bill.applicant_id) throw new Error('Tagihan tidak ditemukan');
+    const pay = applyPayment(bill, bill.amount - bill.discount - bill.paid_amount, p.method, 'Pembayaran Online', 'Biaya pendaftaran PPDB', { pending: true, reference: p.reference, proof_url: p.proof_url });
     commit();
     return pay;
   },
@@ -179,10 +214,19 @@ export const actions: Record<string, Handler> = {
     return { created, skipped };
   },
 
-  'payments.pay': (p: { bill_id: number; amount: number; method: Payment['method']; note?: string }, user) => {
-    const bill = getDB().bills.find((b) => b.id === Number(p.bill_id));
+  'payments.pay': (p: { bill_id: number; amount: number; method: Payment['method']; note?: string; reference?: string; proof_url?: string }, user) => {
+    const d = getDB();
+    const bill = d.bills.find((b) => b.id === Number(p.bill_id));
     if (!bill) throw new Error('Tagihan tidak ditemukan');
-    const pay = applyPayment(bill, Number(p.amount), p.method, user?.role === 'siswa' || user?.role === 'ortu' ? 'Pembayaran Online' : user?.name || 'Petugas', p.note);
+    const family = user?.role === 'siswa' || user?.role === 'ortu';
+    if (family) {
+      const st = d.students.find((x) => x.id === bill.student_id);
+      const own = st && (user!.role === 'siswa' ? user!.student_id === st.id : st.guardian_id === user!.guardian_id);
+      if (!own) throw new Error('Tagihan bukan milik Anda');
+      if (p.method === 'Tunai') throw new Error('Pembayaran tunai dilakukan di loket keuangan sekolah');
+      if (p.method === 'Transfer Bank' && !p.reference?.trim()) throw new Error('Isi nomor referensi / nama pengirim transfer');
+    } else if (!user || !['admin', 'keuangan'].includes(user.role)) throw new Error('Tidak diizinkan mencatat pembayaran');
+    const pay = applyPayment(bill, Number(p.amount), p.method, family ? 'Pembayaran Online' : user!.name, p.note, { pending: family, reference: p.reference, proof_url: p.proof_url });
     syncLoanFine(bill.id);
     commit();
     return pay;
@@ -236,19 +280,85 @@ export const actions: Record<string, Handler> = {
     return row;
   },
 
-  'exams.submit': (p: { exam_id: number; student_id: number; answers: number[] }) => {
+  // ---------------- CBT: sesi sesuai jadwal, sisa waktu tersimpan, susulan & remedial ----------------
+  'exams.start': (p: { exam_id: number; student_id: number }, user) => {
     const d = getDB();
-    const exam = d.exams.find((e) => e.id === p.exam_id);
-    if (!exam) throw new Error('Ujian tidak ditemukan');
-    if (d.exam_results.some((r) => r.exam_id === exam.id && r.student_id === p.student_id)) throw new Error('Anda sudah mengerjakan ujian ini');
-    const st = d.students.find((x) => x.id === p.student_id);
-    const period = st && periodForExam(d.exam_periods, exam.type, exam.date, st.unit_id);
-    if (st && period && !examEligibility(d, period, st).eligible) throw new Error('Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu');
-    const correct = exam.questions.filter((q, i) => p.answers[i] === q.answer).length;
-    const score = exam.questions.length ? Math.round((correct / exam.questions.length) * 100) : 0;
-    const row = insert('exam_results', { exam_id: exam.id, student_id: p.student_id, answers: p.answers, score, submitted_at: nowISO() });
+    const exam = d.exams.find((e) => e.id === Number(p.exam_id));
+    const st = d.students.find((x) => x.id === Number(p.student_id));
+    if (!exam || !st) throw new Error('Ujian tidak ditemukan');
+    if (user?.role !== 'siswa' || user.student_id !== st.id) throw new Error('Hanya siswa yang bersangkutan yang dapat mengerjakan');
+    if (st.class_id !== exam.class_id) throw new Error('Ujian bukan untuk kelas Anda');
+    if (!exam.is_online) throw new Error('Ujian ini dilaksanakan secara luring');
+    const kkm = d.subjects.find((x) => x.id === exam.subject_id)?.kkm || 75;
+    const now = new Date();
+    finalizeExpired(exam.id, st.id, now);
+    const av = availability(exam, d.exam_windows, getDB().exam_results, getDB().exam_attempts, st.id, kkm, now);
+    let attempt;
+    if (av.state === 'resume') attempt = av.attempt;
+    else if (av.state === 'open') {
+      const period = periodForExam(d.exam_periods, exam.type, av.session.date, st.unit_id);
+      if (period && !examEligibility(d, period, st).eligible) throw new Error('Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu');
+      const byDuration = new Date(now.getTime() + exam.duration * 60000);
+      const close = at(av.session.date, av.session.end_time);
+      const deadline = byDuration < close ? byDuration : close;
+      attempt = insert('exam_attempts', { exam_id: exam.id, student_id: st.id, kind: av.session.kind, window_id: av.session.window_id, started_at: nowISO(), deadline: toLocalISO(deadline), answers: exam.questions.map(() => -1), submitted_at: null });
+      commit();
+    } else if (av.state === 'upcoming') throw new Error(`Ujian dibuka ${fmtDate(av.session.date)} pukul ${av.session.start_time}`);
+    else if (av.state === 'done') throw new Error('Anda sudah mengerjakan ujian ini');
+    else throw new Error(av.reason);
+    return { attempt, questions: exam.questions.map((q) => ({ q: q.q, options: q.options, answer: -1 })), server_now: nowISO() };
+  },
+
+  'exams.saveAnswers': (p: { attempt_id: number; answers: number[] }, user) => {
+    const a = getDB().exam_attempts.find((x) => x.id === Number(p.attempt_id));
+    if (!a || user?.role !== 'siswa' || user.student_id !== a.student_id) throw new Error('Sesi ujian tidak ditemukan');
+    if (a.submitted_at) throw new Error('Ujian sudah dikumpulkan');
+    if (new Date(a.deadline).getTime() + 60000 < Date.now()) throw new Error('Waktu ujian telah habis');
+    patch('exam_attempts', a.id, { answers: p.answers });
     commit();
-    return { ...row, correct, total: exam.questions.length };
+    return { saved: true };
+  },
+
+  'exams.submit': (p: { attempt_id: number; answers?: number[] }, user) => {
+    const d = getDB();
+    const a = d.exam_attempts.find((x) => x.id === Number(p.attempt_id));
+    if (!a || user?.role !== 'siswa' || user.student_id !== a.student_id) throw new Error('Sesi ujian tidak ditemukan');
+    if (a.submitted_at) throw new Error('Ujian sudah dikumpulkan');
+    // Jawaban baru diterima hingga 60 detik setelah batas waktu (toleransi jaringan); setelahnya dipakai jawaban tersimpan
+    const answers = p.answers && new Date(a.deadline).getTime() + 60000 >= Date.now() ? p.answers : a.answers;
+    const res = finalizeAttempt(a.id, answers);
+    commit();
+    return res;
+  },
+
+  'exams.windowCreate': (p: { exam_id: number; kind: 'susulan' | 'remedial'; date: string; start_time: string; end_time: string; student_ids: number[]; notes?: string }, user) => {
+    const d = getDB();
+    const exam = d.exams.find((e) => e.id === Number(p.exam_id));
+    if (!exam) throw new Error('Ujian tidak ditemukan');
+    if (!user || !(user.role === 'admin' || (user.role === 'guru' && exam.teacher_id === user.employee_id))) throw new Error('Hanya guru pengampu yang dapat menjadwalkan');
+    if (!p.date || !p.start_time || !p.end_time || p.end_time <= p.start_time) throw new Error('Jadwal tidak valid');
+    if (!p.student_ids?.length) throw new Error('Pilih minimal satu siswa');
+    const kkm = d.subjects.find((x) => x.id === exam.subject_id)?.kkm || 75;
+    for (const sid of p.student_ids) {
+      const rs = d.exam_results.filter((r) => r.exam_id === exam.id && r.student_id === sid);
+      const name = d.students.find((x) => x.id === sid)?.name;
+      if (p.kind === 'susulan' && rs.some((r) => r.kind !== 'remedial')) throw new Error(`${name} sudah mengikuti ujian`);
+      if (p.kind === 'remedial' && ((effectiveScore(rs, kkm) ?? kkm) >= kkm || rs.some((r) => r.kind === 'remedial'))) throw new Error(`${name} tidak memerlukan remedial`);
+    }
+    const row = insert('exam_windows', { exam_id: exam.id, kind: p.kind, date: p.date, start_time: p.start_time, end_time: p.end_time, student_ids: p.student_ids.map(Number), notes: p.notes || '', created_by: user.name, created_at: nowISO() });
+    commit();
+    return row;
+  },
+
+  'exams.windowDelete': (p: { id: number }, user) => {
+    const d = getDB();
+    const w = d.exam_windows.find((x) => x.id === Number(p.id));
+    const exam = w && d.exams.find((e) => e.id === w.exam_id);
+    if (!w || !exam) throw new Error('Jadwal tidak ditemukan');
+    if (!user || !(user.role === 'admin' || (user.role === 'guru' && exam.teacher_id === user.employee_id))) throw new Error('Tidak diizinkan');
+    removeRow('exam_windows', w.id);
+    commit();
+    return { ok: true };
   },
 
   'grades.save': (p: { rows: { student_id: number; subject_id: number; academic_year_id: number; assignment: number | null; daily: number | null; midterm: number | null; final_exam: number | null; description?: string }[] }) => {
@@ -426,6 +536,33 @@ export const actions: Record<string, Handler> = {
     }
     commit();
     return { ok: true, days };
+  },
+
+  'payments.verify': (p: { id: number }, user) => {
+    if (!user || !['admin', 'keuangan'].includes(user.role)) throw new Error('Hanya bagian keuangan yang dapat memverifikasi pembayaran');
+    const d = getDB();
+    const pay = d.payments.find((x) => x.id === Number(p.id));
+    if (!pay) throw new Error('Pembayaran tidak ditemukan');
+    if (pay.status !== 'menunggu') throw new Error('Pembayaran sudah diproses');
+    const bill = d.bills.find((b) => b.id === pay.bill_id)!;
+    const remaining = bill.amount - bill.discount - bill.paid_amount;
+    if (pay.amount > remaining) throw new Error(`Nominal melebihi sisa tagihan (${remaining.toLocaleString('id-ID')}); tolak dan minta pengajuan ulang`);
+    const row = patch('payments', pay.id, { status: 'terverifikasi', receipt_no: receiptNo(), verified_by: user.name, verified_at: nowISO() });
+    creditBill(bill, pay.amount);
+    syncLoanFine(bill.id);
+    commit();
+    return row;
+  },
+
+  'payments.reject': (p: { id: number; reason: string }, user) => {
+    if (!user || !['admin', 'keuangan'].includes(user.role)) throw new Error('Hanya bagian keuangan yang dapat menolak pembayaran');
+    if (!p.reason?.trim()) throw new Error('Alasan penolakan wajib diisi');
+    const pay = getDB().payments.find((x) => x.id === Number(p.id));
+    if (!pay) throw new Error('Pembayaran tidak ditemukan');
+    if (pay.status !== 'menunggu') throw new Error('Pembayaran sudah diproses');
+    const row = patch('payments', pay.id, { status: 'ditolak', reject_reason: p.reason.trim(), verified_by: user.name, verified_at: nowISO() });
+    commit();
+    return row;
   },
 
   // ---------------- Perpustakaan ----------------

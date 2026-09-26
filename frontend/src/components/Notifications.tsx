@@ -18,14 +18,14 @@ interface Notif {
 
 /** Koleksi yang dibutuhkan per peran (hanya memuat data yang relevan). */
 const KEYS: Record<Role, Resource[]> = {
-  siswa: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books', 'exam_periods', 'exam_dispensations', 'fee_types', 'students'],
-  ortu: ['bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books', 'exam_periods', 'exam_dispensations', 'fee_types', 'students'],
+  siswa: ['payments', 'bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books', 'exam_periods', 'exam_dispensations', 'fee_types', 'students'],
+  ortu: ['payments', 'bills', 'assignments', 'submissions', 'exams', 'exam_results', 'virtual_classes', 'announcements', 'leave_requests', 'book_loans', 'books', 'exam_periods', 'exam_dispensations', 'fee_types', 'students'],
   pustakawan: ['book_loans', 'book_reservations', 'books', 'announcements'],
   guru: ['book_loans', 'books', 'classes', 'student_attendance', 'schedules', 'teaching_journals', 'assignments', 'submissions', 'leave_requests', 'students', 'virtual_classes', 'announcements'],
   keuangan: ['bills', 'payments', 'announcements'],
   kesiswaan: ['applicants', 'leave_requests', 'announcements'],
   kepsek: ['applicants', 'leave_requests', 'bills', 'announcements'],
-  admin: ['applicants', 'leave_requests', 'bills', 'announcements'],
+  admin: ['applicants', 'leave_requests', 'bills', 'payments', 'announcements'],
 };
 
 const AUDIENCE: Record<Role, string[]> = {
@@ -113,9 +113,15 @@ function build(role: Role, d: Partial<DB>, ctx: { studentId?: number; classId?: 
     const overdue = (d.bills || []).filter((b) => b.status !== 'lunas' && b.due_date < t);
     if (overdue.length) out.push({ id: `arrears-${t}`, title: `${overdue.length} tagihan lewat jatuh tempo`, desc: `Piutang ${rupiah(overdue.reduce((a, b) => a + b.amount - b.discount - b.paid_amount, 0))}`, href: '/keuangan/tagihan/', tone: 'red' });
   }
-  if (role === 'keuangan') {
-    const online = (d.payments || []).filter((p) => p.paid_at.startsWith(t) && p.received_by === 'Pembayaran Online');
-    if (online.length) out.push({ id: `online-${t}-${online.length}`, title: `${online.length} pembayaran online hari ini`, desc: rupiah(online.reduce((a, p) => a + p.amount, 0)), href: '/keuangan/pembayaran/', tone: 'green' });
+  if (role === 'keuangan' || role === 'admin') {
+    const waiting = (d.payments || []).filter((p) => p.status === 'menunggu');
+    if (waiting.length) out.push({ id: `verify-${t}-${waiting.length}`, title: `${waiting.length} pembayaran menunggu verifikasi`, desc: rupiah(waiting.reduce((a, p) => a + p.amount, 0)), href: '/keuangan/pembayaran/', tone: 'amber' });
+  }
+  if (role === 'siswa' || role === 'ortu') {
+    (d.payments || []).filter((p) => p.student_id === ctx.studentId && p.status !== 'menunggu' && p.received_by === 'Pembayaran Online' && (p.verified_at || '').slice(0, 10) >= recent)
+      .forEach((p) => out.push(p.status === 'ditolak'
+        ? { id: `pay-rej-${p.id}`, title: 'Pembayaran ditolak', desc: `${rupiah(p.amount)} · ${p.reject_reason}`, href: '/keuangan/tagihan/', tone: 'red' }
+        : { id: `pay-ok-${p.id}`, title: 'Pembayaran terverifikasi', desc: `${rupiah(p.amount)} · kwitansi ${p.receipt_no}`, href: '/keuangan/tagihan/', tone: 'green' }));
   }
   return out;
 }
