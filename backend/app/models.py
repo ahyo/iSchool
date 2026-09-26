@@ -447,6 +447,27 @@ class Discussion(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
 
 
+class Enrollment(Base):
+    """Arsip keanggotaan kelas per semester: dasar riwayat akademik & rapor semester lampau."""
+    __tablename__ = "enrollments"
+    __table_args__ = (UniqueConstraint("student_id", "academic_year_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    academic_year_id: Mapped[int] = mapped_column(ForeignKey("academic_years.id"))
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id"))
+    class_id: Mapped[int | None] = mapped_column(FK("classes.id"), nullable=True)
+    # Snapshot: nama kelas & wali kelas saat itu (kelas/wali kelas dapat berubah di tahun berikutnya)
+    class_name: Mapped[str] = mapped_column(String(40))
+    grade: Mapped[int] = mapped_column(Integer)
+    homeroom_name: Mapped[str] = mapped_column(String(150), default="")
+    sick: Mapped[int] = mapped_column(Integer, default=0)
+    permit: Mapped[int] = mapped_column(Integer, default=0)
+    absent: Mapped[int] = mapped_column(Integer, default=0)
+    homeroom_note: Mapped[str] = mapped_column(Text, default="")
+    result: Mapped[str | None] = mapped_column(String(10), nullable=True)  # naik | tinggal | lulus
+    next_class_name: Mapped[str] = mapped_column(String(40), default="")
+
+
 # Resource REST -> model (urutan = urutan aman untuk seeding karena foreign key)
 RESOURCES: dict[str, type[Base]] = {
     "settings": Setting,
@@ -481,4 +502,5 @@ RESOURCES: dict[str, type[Base]] = {
     "lesson_progress": LessonProgress,
     "virtual_classes": VirtualClass,
     "discussions": Discussion,
+    "enrollments": Enrollment,
 }

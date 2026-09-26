@@ -14,7 +14,7 @@ from ..database import get_db
 from ..deps import Principal, bearer, ensure_role, get_principal
 from ..models import (
     AcademicYear, Announcement, Applicant, Bill, Employee, EmployeeAttendance, Event, Exam, ExamResult,
-    Discussion, Extracurricular, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
+    Discussion, Enrollment, Extracurricular, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
     Setting, Student, StudentAttendance, Submission, Unit, User, VirtualClass,
 )
 from ..security import hash_password
@@ -343,6 +343,52 @@ def grades_save(db: Session, p: dict, user: Principal):
     return {"saved": len(rows)}
 
 
+def snapshot_enrollment(db: Session, s: Student, academic_year_id: int, **extra) -> Enrollment:
+    """Buat/perbarui arsip kelas siswa pada semester tertentu (kelas, wali kelas, kehadiran, catatan)."""
+    ay = db.get(AcademicYear, academic_year_id)
+    row = db.scalars(select(Enrollment).where(Enrollment.student_id == s.id, Enrollment.academic_year_id == academic_year_id)).first()
+    cls = db.get(SchoolClass, s.class_id) if s.class_id else None
+    if cls:
+        att = select(StudentAttendance.status).where(StudentAttendance.student_id == s.id)
+        if ay:
+            att = att.where(StudentAttendance.date >= ay.start_date, StudentAttendance.date <= ay.end_date)
+        statuses = list(db.scalars(att))
+        finals = [f for f in db.scalars(select(Grade.final).where(Grade.student_id == s.id, Grade.academic_year_id == academic_year_id)) if f is not None]
+        mean = sum(finals) / len(finals) if finals else 0
+        homeroom = db.get(Employee, cls.homeroom_id) if cls.homeroom_id else None
+        snap = dict(unit_id=s.unit_id, class_id=cls.id, class_name=cls.name, grade=cls.grade, homeroom_name=homeroom.name if homeroom else "-",
+                    sick=statuses.count("S"), permit=statuses.count("I"), absent=statuses.count("A"))
+        note = ("Prestasi belajar sangat baik. Pertahankan!" if mean >= 85 else "Hasil belajar baik. Tingkatkan konsistensi belajar." if mean >= 75
+                else "Perlu meningkatkan semangat dan kedisiplinan belajar.")
+    else:
+        snap, note = {}, ""
+    if not row:
+        if not cls:
+            raise HTTPException(400, f"Siswa {s.name} tidak memiliki kelas untuk diarsipkan")
+        row = Enrollment(student_id=s.id, academic_year_id=academic_year_id, homeroom_note=note, result=None, next_class_name="", **snap)
+        db.add(row)
+    else:
+        for k, v in snap.items():
+            setattr(row, k, v)
+        if not row.homeroom_note:
+            row.homeroom_note = note
+    for k, v in extra.items():
+        setattr(row, k, v)
+    return row
+
+
+def academic_years_archive(db: Session, p: dict, user: Principal):
+    ensure_role(user, "admin")
+    ay = db.get(AcademicYear, int(p.get("id") or 0))
+    if not ay:
+        raise HTTPException(404, "Tahun ajaran tidak ditemukan")
+    students = list(db.scalars(select(Student).where(Student.status == "aktif", Student.class_id.is_not(None))))
+    for s in students:
+        snapshot_enrollment(db, s, ay.id)
+    db.commit()
+    return {"archived": len(students)}
+
+
 def promotions_process(db: Session, p: dict, user: Principal):
     ensure_role(user, "admin", "kepsek", "kesiswaan")
     decisions = p.get("decisions") or []
@@ -350,6 +396,8 @@ def promotions_process(db: Session, p: dict, user: Principal):
         s = db.get(Student, int(d["student_id"]))
         if not s:
             continue
+        next_cls = db.get(SchoolClass, int(d["to_class_id"])) if d.get("to_class_id") and d["result"] != "lulus" else None
+        snapshot_enrollment(db, s, int(p["academic_year_id"]), result=d["result"], next_class_name=next_cls.name if next_cls else "")
         db.add(Promotion(student_id=s.id, academic_year_id=int(p["academic_year_id"]), from_class_id=s.class_id,
                          to_class_id=None if d["result"] == "lulus" else d.get("to_class_id"), result=d["result"], note=d.get("note") or "", processed_at=now()))
         if d["result"] == "lulus":
@@ -491,6 +539,7 @@ HANDLERS = {
     "grades.save": grades_save,
     "promotions.process": promotions_process,
     "academic_years.activate": academic_years_activate,
+    "academic_years.archive": academic_years_archive,
     "ekskul.toggle": ekskul_toggle,
     "elearning.complete": elearning_complete,
     "elearning.join": elearning_join,

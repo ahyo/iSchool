@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, Database, Pencil, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
 import { api, IS_DEMO, API_URL, useData } from '@/lib/api';
 import { ROLE_LABEL } from '@/lib/auth';
-import { Badge, Button, Card, DataTable, Field, Input, Loading, PageHeader, Tabs, Textarea, run, type Column } from '@/components/ui';
+import { Badge, Button, Card, DataTable, Field, Input, Loading, PageHeader, Tabs, Textarea, run, toast, type Column } from '@/components/ui';
 import { FormModal } from '@/components/FormModal';
 import { indexBy } from '@/lib/scope';
 import { fmtDate } from '@/lib/utils';
@@ -12,7 +12,7 @@ import type { AcademicYear, Major, Settings, Unit, User } from '@/lib/types';
 type Tab = 'profil' | 'unit' | 'tahun' | 'jurusan' | 'akun' | 'sistem';
 
 export default function PengaturanPage() {
-  const { data } = useData(['settings', 'units', 'academic_years', 'majors', 'users', 'employees', 'students', 'guardians']);
+  const { data } = useData(['settings', 'units', 'academic_years', 'majors', 'users', 'employees', 'students', 'guardians', 'enrollments']);
   const [tab, setTab] = useState<Tab>('profil');
   const [s, setS] = useState<Settings | null>(null);
   const [editUnit, setEditUnit] = useState<Partial<Unit> | null>(null);
@@ -37,7 +37,13 @@ export default function PengaturanPage() {
     { key: 'name', header: 'Tahun Ajaran', render: (y) => <span className="font-medium">{y.name}</span> },
     { key: 'semester', header: 'Semester' },
     { key: 'range', header: 'Periode', render: (y) => `${fmtDate(y.start_date)} – ${fmtDate(y.end_date)}` },
-    { key: 'is_active', header: 'Status', render: (y) => (y.is_active ? <Badge tone="green">Aktif</Badge> : <Button size="sm" variant="secondary" onClick={() => run(() => api.action('academic_years.activate', { id: y.id }), `TA ${y.name} ${y.semester} diaktifkan`)}>Aktifkan</Button>) },
+    { key: 'is_active', header: 'Status', render: (y) => (y.is_active ? <Badge tone="green">Aktif</Badge> : <Button size="sm" variant="secondary" onClick={() => confirm(`Aktifkan ${y.name} ${y.semester}? Pastikan rapor semester aktif sudah diarsipkan.`) && run(() => api.action('academic_years.activate', { id: y.id }), `TA ${y.name} ${y.semester} diaktifkan`)}>Aktifkan</Button>) },
+    { key: 'arsip', header: 'Arsip Rapor', render: (y) => {
+      const n = data.enrollments.filter((e) => e.academic_year_id === y.id).length;
+      return y.is_active
+        ? <Button size="sm" variant="secondary" onClick={() => run(async () => { const r = await api.action<{ archived: number }>('academic_years.archive', { id: y.id }); toast.success(`${r.archived} rapor siswa diarsipkan`); })}>Arsipkan Rapor ({n})</Button>
+        : <span className="text-xs text-slate-500">{n} siswa</span>;
+    } },
     { key: 'a', header: '', render: (y) => <Button size="sm" variant="ghost" onClick={() => setEditYear(y)}><Pencil className="h-4 w-4" /></Button> },
   ];
   const majorCols: Column<Major>[] = [
@@ -74,7 +80,7 @@ export default function PengaturanPage() {
       )}
 
       {tab === 'unit' && <Card title="Unit Pendidikan" actions={<Button size="sm" onClick={() => setEditUnit({ code: 'SD', min_grade: 1, max_grade: 6, accreditation: 'A' })}><Plus className="h-4 w-4" /> Tambah Unit</Button>}><DataTable rows={data.units} columns={unitCols} /><p className="mt-3 text-xs text-slate-500">Sistem mendukung satu atau lebih unit (SD, SMP, SMA, SMK) dalam satu yayasan. Sekolah tunggal cukup memiliki satu unit.</p></Card>}
-      {tab === 'tahun' && <Card title="Tahun Ajaran & Semester" actions={<Button size="sm" onClick={() => setEditYear({ semester: 'Ganjil', is_active: false })}><Plus className="h-4 w-4" /> Tambah</Button>}><DataTable rows={data.academic_years} columns={yearCols} /></Card>}
+      {tab === 'tahun' && <Card title="Tahun Ajaran & Semester" actions={<Button size="sm" onClick={() => setEditYear({ semester: 'Ganjil', is_active: false })}><Plus className="h-4 w-4" /> Tambah</Button>}><DataTable rows={[...data.academic_years].sort((a, b) => b.start_date.localeCompare(a.start_date))} columns={yearCols} /><p className="mt-3 text-xs text-slate-500">Akhir semester: klik <b>Arsipkan Rapor</b> untuk menyimpan kelas, wali kelas, kehadiran, dan catatan setiap siswa ke riwayat akademik, lalu aktifkan semester berikutnya. Proses kenaikan kelas juga mengarsipkan data secara otomatis.</p></Card>}
       {tab === 'jurusan' && <Card title="Jurusan (SMK) / Peminatan (SMA)" actions={<Button size="sm" onClick={() => setEditMajor({})}><Plus className="h-4 w-4" /> Tambah</Button>}><DataTable rows={data.majors} columns={majorCols} /></Card>}
       {tab === 'akun' && <Card title="Akun Pengguna" actions={<Button size="sm" onClick={() => setEditUser({ role: 'guru', is_active: true })}><Plus className="h-4 w-4" /> Tambah Akun</Button>}><DataTable rows={data.users} columns={userCols} /></Card>}
       {tab === 'sistem' && (

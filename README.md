@@ -33,7 +33,8 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 | Akademik | Tahun ajaran & semester, kelas/rombel & wali kelas, mata pelajaran & KKTP, jadwal pelajaran (per kelas/per guru, cek bentrok) |
 | Pembelajaran | Materi pelajaran, tugas (pengumpulan, penilaian, umpan balik), ujian & CBT pilihan ganda dengan timer dan penilaian otomatis |
 | E-Learning | Kelas online per mapel-kelas: modul & pelajaran bertahap (bacaan, video YouTube/Vimeo/Drive/MP4, dokumen, kuis dengan nilai otomatis & bisa diulang), draf/publikasi, pelacakan progres per siswa (+ ekspor CSV), kelas virtual (Jitsi/Meet/Zoom/Teams) dengan pencatatan kehadiran & rekaman, forum diskusi (topik, balasan, sematkan, moderasi), dipantau orang tua |
-| Nilai & rapor | Input nilai (tugas, harian, PTS, PAS → nilai akhir berbobot), leger kelas + ranking, rapor siap cetak |
+| Nilai & rapor | Input nilai (tugas, harian, PTS, PAS → nilai akhir berbobot), leger kelas + ranking, rapor siap cetak untuk semester mana pun |
+| Riwayat akademik | Linimasa kelas siswa dari tahun ke tahun (kelas & wali kelas saat itu, keputusan naik/lulus), tren nilai per semester, rapor setiap semester lampau yang bisa dicetak; arsip semester otomatis saat kenaikan kelas + tombol "Arsipkan Rapor" di Pengaturan |
 | Kenaikan & kelulusan | Rekomendasi otomatis (nilai < KKTP, kehadiran, poin pelanggaran), keputusan naik/tinggal/lulus, riwayat |
 | Kesiswaan | Prestasi, pelanggaran (poin), konseling, ekstrakurikuler |
 | Kepegawaian | Data guru & tenaga kependidikan, status kepegawaian, struktur organisasi (bagan) |

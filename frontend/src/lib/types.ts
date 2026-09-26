@@ -415,6 +415,24 @@ export interface Discussion {
   created_at: string;
 }
 
+/** Arsip keanggotaan kelas per semester (riwayat akademik & rapor semester lampau). */
+export interface Enrollment {
+  id: number;
+  student_id: number;
+  academic_year_id: number;
+  unit_id: number;
+  class_id: number | null;
+  class_name: string;
+  grade: number;
+  homeroom_name: string;
+  sick: number;
+  permit: number;
+  absent: number;
+  homeroom_note: string;
+  result: 'naik' | 'tinggal' | 'lulus' | null;
+  next_class_name: string;
+}
+
 export interface DB {
   settings: Settings[];
   units: Unit[];
@@ -448,6 +466,7 @@ export interface DB {
   lesson_progress: LessonProgress[];
   virtual_classes: VirtualClass[];
   discussions: Discussion[];
+  enrollments: Enrollment[];
 }
 
 export type Resource = keyof DB;

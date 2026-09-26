@@ -2,7 +2,7 @@ import type {
   DB, Unit, Employee, Subject, SchoolClass, Student, Guardian, Schedule, StudentAttendance,
   EmployeeAttendance, Grade, FeeType, Bill, Payment, Applicant, Announcement, EventItem,
   StudentRecord, Material, Assignment, Submission, Exam, ExamResult, Question, Major, User,
-  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion,
+  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment,
 } from '../types';
 import { addDays, isWeekend, today, pad, computeFinal } from '../utils';
 
@@ -120,11 +120,23 @@ export function buildSeed(): DB {
     { id: 4, unit_id: 4, code: 'AKL', name: 'Akuntansi dan Keuangan Lembaga' },
   ];
 
-  const academic_years = [
-    { id: 1, name: '2025/2026', semester: 'Genap' as const, start_date: '2026-01-05', end_date: '2026-06-26', is_active: false },
-    { id: 2, name: '2026/2027', semester: 'Ganjil' as const, start_date: '2026-07-13', end_date: '2026-12-18', is_active: true },
-  ];
-  const AY = 2;
+  // Tahun ajaran per semester sejak 2020/2021 (untuk riwayat akademik); aktif = 2026/2027 Ganjil
+  const academic_years: AcademicYear[] = [];
+  const ayIdOf: Record<string, number> = {};
+  for (let y = 2020; y <= 2026; y++) {
+    for (const semester of ['Ganjil', 'Genap'] as const) {
+      if (y === 2026 && semester === 'Genap') break;
+      const id = academic_years.length + 1;
+      ayIdOf[`${y}-${semester}`] = id;
+      academic_years.push({
+        id, name: `${y}/${y + 1}`, semester,
+        start_date: semester === 'Ganjil' ? `${y}-07-13` : `${y + 1}-01-05`,
+        end_date: semester === 'Ganjil' ? `${y}-12-18` : `${y + 1}-06-26`,
+        is_active: y === 2026 && semester === 'Ganjil',
+      });
+    }
+  }
+  const AY = ayIdOf['2026-Ganjil'];
 
   // ---------- Employees ----------
   const employees: Employee[] = [];
@@ -647,6 +659,83 @@ export function buildSeed(): DB {
     { id: 7, username: 'ortu', password: DEMO_PASSWORD, name: demoGuardian.name, role: 'ortu', employee_id: null, student_id: null, guardian_id: demoGuardian.id, is_active: true },
   ];
 
+  // ---------- Riwayat akademik: kelas & rapor semester-semester sebelumnya ----------
+  const enrollments: Enrollment[] = [];
+  let enid = 0;
+  const majorCode = (id: number | null) => majors.find((m) => m.id === id)?.code || '';
+  const subjectsFor = (unitId: number, majorId: number | null) => {
+    let subs = unitSubjects(unitId);
+    if (majorId === 1) subs = subs.filter((x) => x.code !== 'EKO');
+    if (majorId === 2) subs = subs.filter((x) => !['FIS', 'KIM'].includes(x.code));
+    if (majorId === 3) subs = subs.filter((x) => x.code !== 'AKL');
+    if (majorId === 4) subs = subs.filter((x) => x.code !== 'KJ');
+    return subs;
+  };
+  const pastClassName = (st: Student, unitCode: string, level: number, majorId: number | null, currentName: string) => {
+    if (unitCode === 'SD') return `${level}A`;
+    if (unitCode === 'SMP') return `${roman[level]}-${currentName.slice(-1)}`;
+    if (unitCode === 'SMA') return level === 10 ? `X-${(st.id % 2) + 1}` : `${roman[level]} ${majorCode(majorId)}`;
+    return `${roman[level]} ${majorCode(majorId)}`;
+  };
+  const NOTES: [number, string][] = [
+    [88, 'Prestasi belajar sangat baik. Pertahankan dan terus kembangkan potensimu.'],
+    [80, 'Hasil belajar baik. Tingkatkan konsistensi dan keaktifan di kelas.'],
+    [72, 'Cukup baik. Perbanyak latihan pada mata pelajaran yang belum tuntas.'],
+    [0, 'Perlu meningkatkan kedisiplinan dan semangat belajar dengan bimbingan orang tua.'],
+  ];
+  const addHistory = (st: Student, fromLevel: number, toLevel: number, startYear: number, majorId: number | null, currentName: string, graduates: boolean) => {
+    const unit = units.find((u) => u.id === st.unit_id)!;
+    const current = grades.filter((g) => g.student_id === st.id).map((g) => g.final || 0);
+    const ability = current.length ? current.reduce((a, b) => a + b, 0) / current.length : int(70, 88);
+    const teachers = unitTeachers[unit.id];
+    for (let level = fromLevel; level <= toLevel; level++) {
+      const year = startYear + (level - fromLevel);
+      const levelMajor = unit.code === 'SMA' && level === 10 ? null : majorId;
+      const className = pastClassName(st, unit.code, level, levelMajor, currentName);
+      const homeroom = teachers[(level + st.unit_id) % teachers.length].name;
+      for (const semester of ['Ganjil', 'Genap'] as const) {
+        const ayId = ayIdOf[`${year}-${semester}`];
+        if (!ayId) continue;
+        const base = ability - (toLevel + 1 - level) * 1.2 + int(-3, 3);
+        const finals: number[] = [];
+        for (const sub of subjectsFor(unit.id, levelMajor)) {
+          const v = () => Math.min(100, Math.max(50, Math.round(base + int(-9, 9))));
+          const g = { assignment: v(), daily: v(), midterm: v(), final_exam: v() };
+          const final = computeFinal(g);
+          finals.push(final || 0);
+          grades.push({ id: grades.length + 1, student_id: st.id, subject_id: sub.id, academic_year_id: ayId, ...g, final, description: '' });
+        }
+        const mean = finals.reduce((a, b) => a + b, 0) / (finals.length || 1);
+        const isLast = graduates && level === toLevel && semester === 'Genap';
+        const result = semester === 'Genap' ? (isLast ? 'lulus' : 'naik') : null;
+        const nextName = result === 'naik' ? (level + 1 === toLevel + 1 ? currentName : pastClassName(st, unit.code, level + 1, unit.code === 'SMA' && level + 1 === 10 ? null : majorId, currentName)) : '';
+        enrollments.push({
+          id: ++enid, student_id: st.id, academic_year_id: ayId, unit_id: unit.id, class_id: null, class_name: className, grade: level,
+          homeroom_name: homeroom, sick: rand() < 0.5 ? int(1, 3) : 0, permit: rand() < 0.4 ? int(1, 2) : 0, absent: rand() < 0.12 ? 1 : 0,
+          homeroom_note: NOTES.find(([min]) => mean >= min)![1], result, next_class_name: nextName,
+        });
+      }
+    }
+  };
+  for (const st of students) {
+    const unit = units.find((u) => u.id === st.unit_id)!;
+    if (st.status === 'aktif') {
+      const cls = classes.find((c) => c.id === st.class_id)!;
+      if (cls.grade === unit.min_grade) continue;
+      let from = unit.min_grade;
+      if (st.entry_type === 'pindahan') {
+        // Siswa pindahan: riwayat di sekolah ini hanya sejak masuk (1 tahun terakhir)
+        from = cls.grade - 1;
+        st.entry_year = 2025;
+        st.origin_school = `${unit.code} Negeri ${(st.id % 9) + 1} ${CITIES[st.id % CITIES.length]}`;
+      }
+      addHistory(st, from, cls.grade - 1, 2026 - (cls.grade - from), cls.major_id, cls.name, false);
+    } else if (st.status === 'lulus') {
+      const majorId = st.unit_id === 3 ? 1 : 3;
+      addHistory(st, unit.min_grade, unit.max_grade, 2023, majorId, `XII ${majorCode(majorId)}`, true);
+    }
+  }
+
   return {
     settings: [{
       id: 1, name: 'Yayasan Pendidikan Nusantara Cendekia', foundation: 'Yayasan Nusantara Cendekia', address: 'Jl. Pendidikan No. 1-5, Kebayoran Baru, Jakarta Selatan 12110',
@@ -658,8 +747,8 @@ export function buildSeed(): DB {
     units, academic_years, users, employees, majors, subjects, classes, guardians, students, schedules,
     student_attendance, employee_attendance, materials, assignments, submissions, exams, exam_results, grades,
     fee_types, bills, payments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
-    lessons, lesson_progress, virtual_classes, discussions,
+    lessons, lesson_progress, virtual_classes, discussions, enrollments,
   };
 }
 
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;

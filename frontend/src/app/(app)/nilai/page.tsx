@@ -1,11 +1,14 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { Download, Printer, Save } from 'lucide-react';
+import Link from 'next/link';
+import { Download, History, Printer, Save } from 'lucide-react';
 import { api, useData } from '@/lib/api';
 import { useLearningScope, type LearningScope } from '@/lib/useLearningScope';
 import { Avatar, Button, Card, Input, Loading, PageHeader, Select, Tabs, run } from '@/components/ui';
 import { ReportCard } from '@/components/ReportCard';
 import { avg, cn, computeFinal, downloadCSV, predicate, round } from '@/lib/utils';
+import { studentSemesters, semesterLabel } from '@/lib/history';
+import type { Student } from '@/lib/types';
 
 type Row = { assignment: string; daily: string; midterm: string; final_exam: string };
 const num = (v: string) => (v === '' ? null : Number(v));
@@ -13,15 +16,33 @@ const num = (v: string) => (v === '' ? null : Number(v));
 export default function NilaiPage() {
   const scope = useLearningScope();
   if (!scope) return <Loading />;
-  if (scope.student) {
-    return (
-      <>
-        <PageHeader title="Nilai & Rapor" subtitle={scope.student.name} actions={<Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> Cetak Rapor</Button>} />
-        <ReportCard student={scope.student} />
-      </>
-    );
-  }
+  if (scope.student) return <FamilyReport scope={scope} />;
   return <StaffGrades scope={scope} />;
+}
+
+/** Pilihan semester rapor (semester aktif + semester-semester sebelumnya). */
+function SemesterSelect({ student, value, onChange }: { student: Student; value: number | null; onChange: (id: number) => void }) {
+  const { data } = useData(['academic_years', 'enrollments', 'grades', 'classes', 'employees', 'subjects', 'student_attendance']);
+  const semesters = useMemo(() => (data ? studentSemesters(data, student) : []), [data, student]);
+  useEffect(() => {
+    if (semesters.length && !semesters.some((s) => s.ay.id === value)) onChange(semesters[semesters.length - 1].ay.id);
+  }, [semesters, value, onChange]);
+  return <Select className="w-64" value={value ?? ''} onChange={(e) => onChange(Number(e.target.value))} options={[...semesters].reverse().map((s) => ({ value: s.ay.id, label: `${semesterLabel(s.ay)} · Kelas ${s.className}${s.isCurrent ? ' (berjalan)' : ''}` }))} />;
+}
+
+function FamilyReport({ scope }: { scope: LearningScope }) {
+  const student = scope.student!;
+  const [ayId, setAyId] = useState<number | null>(null);
+  return (
+    <>
+      <PageHeader title="Nilai & Rapor" subtitle={student.name} actions={<>
+        <SemesterSelect student={student} value={ayId} onChange={setAyId} />
+        <Link href="/riwayat/"><Button variant="secondary"><History className="h-4 w-4" /> Riwayat Akademik</Button></Link>
+        <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> Cetak Rapor</Button>
+      </>} />
+      {ayId && <ReportCard student={student} academicYearId={ayId} />}
+    </>
+  );
 }
 
 function StaffGrades({ scope }: { scope: LearningScope }) {
@@ -32,6 +53,7 @@ function StaffGrades({ scope }: { scope: LearningScope }) {
   const [subjectId, setSubjectId] = useState(0);
   const [studentId, setStudentId] = useState(0);
   const [rows, setRows] = useState<Record<number, Row>>({});
+  const [raporAy, setRaporAy] = useState<number | null>(null);
 
   // Untuk leger & rapor: guru hanya kelas perwalian; staf semua kelas pada scope
   const legerClasses = scope.role === 'guru' ? scope.classList.filter((c) => c.homeroom_id === scope.employee?.id) : scope.classList;
@@ -81,6 +103,7 @@ function StaffGrades({ scope }: { scope: LearningScope }) {
         <Select className="w-48" value={classId} onChange={(e) => setClassId(Number(e.target.value))} options={classOpts.map((c) => ({ value: c.id, label: c.name }))} />
         {tab === 'input' && <Select className="w-64" value={subjectId} onChange={(e) => setSubjectId(Number(e.target.value))} options={subjectOpts.map((id) => ({ value: id, label: scope.subjects.get(id)?.name || '' }))} />}
         {tab === 'rapor' && <Select className="w-64" value={studentId} onChange={(e) => setStudentId(Number(e.target.value))} options={students.map((s) => ({ value: s.id, label: s.name }))} />}
+        {tab === 'rapor' && students.find((s) => s.id === studentId) && <SemesterSelect student={students.find((s) => s.id === studentId)!} value={raporAy} onChange={setRaporAy} />}
         {tab === 'rapor' && <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" /> Cetak</Button>}
         {isHomeroom && tab === 'input' && <span className="self-center text-xs text-slate-500">Anda wali kelas — leger & rapor tersedia di tab lain.</span>}
       </div>
@@ -144,7 +167,7 @@ function StaffGrades({ scope }: { scope: LearningScope }) {
         </Card>
       )}
 
-      {tab === 'rapor' && studentId > 0 && <ReportCard student={students.find((s) => s.id === studentId)!} />}
+      {tab === 'rapor' && studentId > 0 && raporAy && <ReportCard student={students.find((s) => s.id === studentId)!} academicYearId={raporAy} />}
     </>
   );
 }

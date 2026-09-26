@@ -235,3 +235,38 @@ def test_discussion_permissions(client, auth):
     assert client.post("/api/actions/discussions.delete", headers=h, json={"id": t.json()["id"]}).status_code == 200
     ids = {d["id"] for d in client.get(f"/api/discussions?class_id={me['class_id']}", headers=h).json()}
     assert t.json()["id"] not in ids and reply.json()["id"] not in ids
+
+
+# ------------------------------------------------------------------ riwayat akademik
+def test_student_sees_own_history_and_past_grades(client, auth):
+    h = auth("siswa")
+    me = client.get("/api/students", headers=h).json()[0]
+    enr = client.get("/api/enrollments", headers=h).json()
+    assert enr and all(e["student_id"] == me["id"] for e in enr)
+    years = {y["id"]: y for y in client.get("/api/academic_years", headers=h).json()}
+    past = [e for e in enr if not years[e["academic_year_id"]]["is_active"]]
+    assert past and past[-1]["result"] == "naik" and past[-1]["class_name"].startswith("X")
+    grades = client.get(f"/api/grades?academic_year_id={past[0]['academic_year_id']}", headers=h).json()
+    assert grades and all(g["student_id"] == me["id"] for g in grades)
+
+
+def test_sd_student_has_history_since_grade_one(client, auth):
+    h = auth("admin")
+    cls = client.get("/api/classes?name=3A", headers=h).json()[0]
+    st = client.get(f"/api/students?class_id={cls['id']}", headers=h).json()
+    baru = next(s for s in st if s["entry_type"] == "baru")
+    names = [e["class_name"] for e in client.get(f"/api/enrollments?student_id={baru['id']}", headers=h).json()]
+    assert names == ["1A", "1A", "2A", "2A"]
+
+
+def test_archive_semester_is_idempotent_and_admin_only(client, auth):
+    h = auth("admin")
+    ay = next(y for y in client.get("/api/academic_years", headers=h).json() if y["is_active"])
+    assert client.post("/api/actions/academic_years.archive", headers=auth("guru"), json={"id": ay["id"]}).status_code == 403
+    first = client.post("/api/actions/academic_years.archive", headers=h, json={"id": ay["id"]}).json()
+    second = client.post("/api/actions/academic_years.archive", headers=h, json={"id": ay["id"]}).json()
+    assert first["archived"] == second["archived"] > 0
+    rows = client.get(f"/api/enrollments?academic_year_id={ay['id']}", headers=h).json()
+    ids = [r["student_id"] for r in rows]
+    assert len(ids) == len(set(ids)) >= first["archived"]  # satu arsip per siswa, tanpa duplikat
+    assert all(r["class_name"] and r["homeroom_name"] for r in rows)

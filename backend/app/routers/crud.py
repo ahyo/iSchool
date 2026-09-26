@@ -33,6 +33,7 @@ WRITE_ROLES: dict[str, set[str]] = {
     # E-learning: konten oleh guru; progres & diskusi hanya lewat aksi (/api/actions)
     "lessons": {"admin", "guru"}, "virtual_classes": {"admin", "guru"},
     "lesson_progress": ADMIN, "discussions": ADMIN,
+    "enrollments": ADMIN,  # diisi lewat aksi arsip / kenaikan kelas
 }
 # Data yang tidak boleh dilihat siswa/orang tua sama sekali
 STAFF_ONLY_READ = {"applicants"}

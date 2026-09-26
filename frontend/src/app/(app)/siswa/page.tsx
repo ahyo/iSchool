@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Download, Pencil, Plus, UserMinus, Eye } from 'lucide-react';
+import Link from 'next/link';
+import { Download, Pencil, Plus, UserMinus, Eye, History } from 'lucide-react';
 import { api, useData } from '@/lib/api';
 import { useAuth, useProfile, useWorkspace } from '@/lib/auth';
 import { Avatar, Badge, Button, Card, DataTable, Field, Loading, Modal, PageHeader, SearchInput, Select, StatusBadge, Textarea, run, type Column } from '@/components/ui';
@@ -143,7 +144,7 @@ export default function SiswaPage() {
                 <p className="text-lg font-bold">{d.name}</p>
                 <p className="text-slate-500">NIS {d.nis} · NISN {d.nisn || '-'} · Kelas {cls.get(d.class_id || 0)?.name || '-'}</p>
               </div>
-              <div className="ml-auto"><StatusBadge status={d.status} /></div>
+              <div className="ml-auto flex items-center gap-2"><StatusBadge status={d.status} /><Link href={`/riwayat/?s=${d.id}`}><Button size="sm" variant="secondary"><History className="h-4 w-4" /> Riwayat & Rapor</Button></Link></div>
             </div>
             <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
               {[['Tempat, Tgl Lahir', `${d.birth_place}, ${fmtDate(d.birth_date)}`], ['Agama', d.religion], ['Jalur Masuk', `${d.entry_type} (${d.entry_year})`], ['Alamat', d.address], ['Orang Tua/Wali', `${g?.name || '-'} (${g?.relation || ''})`], ['Kontak', g?.phone || '-'], ['Pekerjaan Ortu', g?.occupation || '-'], ['Catatan', d.notes || '-']].map(([k, v]) => (

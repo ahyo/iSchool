@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Users, UserPlus, School, BookOpen, CalendarDays, Briefcase, Network, ClipboardCheck, Fingerprint,
-  FileText, NotebookPen, MonitorPlay, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
+  FileText, NotebookPen, MonitorPlay, History, FileQuestion, GraduationCap, TrendingUp, Wallet, Receipt, CreditCard, Tags, ShieldAlert,
   Megaphone, Settings, BarChart3, Trophy,
 } from 'lucide-react';
 import type { Role } from './types';
@@ -40,6 +40,7 @@ export const NAV: NavGroup[] = [
     { href: '/tugas', label: 'Tugas', icon: NotebookPen, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/ujian', label: 'Ujian & CBT', icon: FileQuestion, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
     { href: '/nilai', label: 'Nilai & Rapor', icon: GraduationCap, roles: ['admin', 'kepsek', 'guru', 'siswa', 'ortu'] },
+    { href: '/riwayat', label: 'Riwayat Akademik', icon: History, roles: ['admin', 'kepsek', 'kesiswaan', 'guru', 'siswa', 'ortu'] },
   ] },
   { title: 'Presensi', items: [
     { href: '/presensi-siswa', label: 'Presensi Siswa', icon: ClipboardCheck, roles: ['admin', 'kepsek', 'kesiswaan', 'guru', 'siswa', 'ortu'], labelFor: { siswa: 'Kehadiran Saya', ortu: 'Kehadiran Anak' } },

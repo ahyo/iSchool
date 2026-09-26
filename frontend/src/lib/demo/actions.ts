@@ -1,6 +1,6 @@
 /* Implementasi aksi bisnis untuk mode demo (dijalankan di browser).
  * Aksi yang sama diimplementasikan di backend FastAPI: POST /api/actions/{name}. */
-import type { Applicant, Bill, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User } from '../types';
+import type { Applicant, Bill, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User, Enrollment } from '../types';
 import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
 import { computeFinal, nowISO, nowTime, pad, today, addDays } from '../utils';
@@ -24,6 +24,27 @@ function applyPayment(bill: Bill, amount: number, method: Payment['method'], rec
   const paid = bill.paid_amount + amount;
   patch('bills', bill.id, { paid_amount: paid, status: paid >= bill.amount - bill.discount ? 'lunas' : 'sebagian' });
   return payment;
+}
+
+/** Buat/perbarui arsip kelas siswa pada semester tertentu (kelas, wali kelas, rekap kehadiran, catatan). */
+function snapshotEnrollment(student: Student, academicYearId: number, extra: Partial<Enrollment> = {}) {
+  const d = getDB();
+  const ay = d.academic_years.find((y) => y.id === academicYearId);
+  const cls = d.classes.find((c) => c.id === student.class_id);
+  const existing = d.enrollments.find((e) => e.student_id === student.id && e.academic_year_id === academicYearId);
+  if (existing && !cls) return patch('enrollments', existing.id, extra);
+  const att = d.student_attendance.filter((a) => a.student_id === student.id && (!ay || (a.date >= ay.start_date && a.date <= ay.end_date)));
+  const grades = d.grades.filter((g) => g.student_id === student.id && g.academic_year_id === academicYearId).map((g) => g.final).filter((x): x is number => x != null);
+  const mean = grades.length ? grades.reduce((a, b) => a + b, 0) / grades.length : 0;
+  const snap = {
+    unit_id: student.unit_id, class_id: cls?.id ?? null, class_name: cls?.name ?? existing?.class_name ?? '-', grade: cls?.grade ?? existing?.grade ?? 0,
+    homeroom_name: d.employees.find((e) => e.id === cls?.homeroom_id)?.name ?? existing?.homeroom_name ?? '-',
+    sick: att.filter((a) => a.status === 'S').length, permit: att.filter((a) => a.status === 'I').length, absent: att.filter((a) => a.status === 'A').length,
+    homeroom_note: existing?.homeroom_note || (mean >= 85 ? 'Prestasi belajar sangat baik. Pertahankan!' : mean >= 75 ? 'Hasil belajar baik. Tingkatkan konsistensi belajar.' : 'Perlu meningkatkan semangat dan kedisiplinan belajar.'),
+  };
+  return existing
+    ? patch('enrollments', existing.id, { ...snap, ...extra })
+    : insert('enrollments', { student_id: student.id, academic_year_id: academicYearId, result: null, next_class_name: '', ...snap, ...extra });
 }
 
 export const actions: Record<string, Handler> = {
@@ -219,6 +240,8 @@ export const actions: Record<string, Handler> = {
     for (const dec of p.decisions) {
       const s = d.students.find((x) => x.id === dec.student_id);
       if (!s) continue;
+      // Arsipkan kelas & keputusan pada semester berjalan sebelum siswa dipindahkan
+      snapshotEnrollment(s, p.academic_year_id, { result: dec.result, next_class_name: dec.result === 'lulus' ? '' : d.classes.find((c) => c.id === dec.to_class_id)?.name || '' });
       insert('promotions', { student_id: s.id, academic_year_id: p.academic_year_id, from_class_id: s.class_id, to_class_id: dec.result === 'lulus' ? null : dec.to_class_id, result: dec.result, note: dec.note || '', processed_at: nowISO() });
       if (dec.result === 'lulus') patch('students', s.id, { status: 'lulus', class_id: null, graduation_year: new Date().getFullYear() });
       else if (dec.to_class_id) patch('students', s.id, { class_id: dec.to_class_id });
@@ -301,6 +324,15 @@ export const actions: Record<string, Handler> = {
     const out = patch('discussions', row.id, { pinned: !row.pinned });
     commit();
     return out;
+  },
+
+  'academic_years.archive': (p: { id: number }, user) => {
+    if (user?.role !== 'admin') throw new Error('Hanya admin yang dapat mengarsipkan rapor');
+    const d = getDB();
+    const active = d.students.filter((s) => s.status === 'aktif' && s.class_id);
+    active.forEach((s) => snapshotEnrollment(s, p.id));
+    commit();
+    return { archived: active.length };
   },
 
   'academic_years.activate': (p: { id: number }) => {
