@@ -1,0 +1,33 @@
+# Menjalankan backend (FastAPI) + PostgreSQL untuk mode LIVE.
+#   docker compose up -d
+# API: http://localhost:8000  ·  Dokumentasi: http://localhost:8000/docs
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ischool
+      POSTGRES_PASSWORD: ischool
+      POSTGRES_DB: ischool
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ischool"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://ischool:ischool@db:5432/ischool
+      SECRET_KEY: ${SECRET_KEY:-ganti-dengan-secret-acak}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

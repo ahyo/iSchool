@@ -1,0 +1,169 @@
+import datetime as dt
+
+
+def test_health(client):
+    assert client.get("/api/health").json() == {"status": "ok"}
+
+
+def test_login_wrong_password(client):
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "salah"})
+    assert r.status_code == 401
+
+
+def test_login_returns_user_without_password(client):
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "demo123"})
+    body = r.json()
+    assert body["user"]["role"] == "admin"
+    assert "password_hash" not in body["user"]
+
+
+def test_requires_auth(client):
+    assert client.get("/api/students").status_code == 401
+
+
+def test_admin_lists_all_students(client, auth):
+    r = client.get("/api/students", headers=auth("admin"))
+    assert r.status_code == 200
+    assert len(r.json()) == 198
+
+
+def test_filter_by_query_param(client, auth):
+    rows = client.get("/api/students?status=lulus", headers=auth("admin")).json()
+    assert rows and all(s["status"] == "lulus" for s in rows)
+
+
+def test_siswa_only_sees_own_data(client, auth):
+    h = auth("siswa")
+    students = client.get("/api/students", headers=h).json()
+    assert len(students) == 1
+    sid = students[0]["id"]
+    bills = client.get("/api/bills", headers=h).json()
+    assert bills and all(b["student_id"] == sid for b in bills)
+    assert client.get("/api/applicants", headers=h).json() == []
+    users = client.get("/api/users", headers=h).json()
+    assert len(users) == 1 and users[0]["username"] == "siswa"
+
+
+def test_ortu_sees_two_children(client, auth):
+    kids = client.get("/api/students", headers=auth("ortu")).json()
+    assert len(kids) == 2
+
+
+def test_exam_answer_key_hidden_for_student(client, auth):
+    exams = client.get("/api/exams", headers=auth("siswa")).json()
+    assert exams and all(q["answer"] == -1 for e in exams for q in e["questions"])
+    staff = client.get("/api/exams", headers=auth("guru")).json()
+    assert any(q["answer"] >= 0 for e in staff for q in e["questions"])
+
+
+def test_write_permission_enforced(client, auth):
+    r = client.post("/api/fee_types", headers=auth("guru"), json={"name": "X", "category": "lainnya", "amount": 1})
+    assert r.status_code == 403
+
+
+def test_crud_roundtrip(client, auth):
+    h = auth("keuangan")
+    r = client.post("/api/fee_types", headers=h, json={"name": "Study Tour", "category": "kegiatan", "amount": 750000, "unit_id": 3})
+    assert r.status_code == 201, r.text
+    fid = r.json()["id"]
+    r = client.patch(f"/api/fee_types/{fid}", headers=h, json={"amount": 800000})
+    assert r.json()["amount"] == 800000
+    assert client.delete(f"/api/fee_types/{fid}", headers=h).status_code == 204
+
+
+def test_public_portal_and_ppdb_flow(client, auth):
+    portal = client.post("/api/actions/public.portal").json()
+    assert portal["settings"]["name"] and len(portal["units"]) == 4
+    reg = client.post("/api/actions/ppdb.register", json={
+        "type": "pindahan", "unit_id": 3, "grade_target": 11, "major_id": 1, "name": "Uji Pindahan", "gender": "L",
+        "birth_place": "Bandung", "birth_date": "2010-05-05", "origin_school": "SMA N 1", "address": "Jl. Uji",
+        "parent_name": "Pak Uji", "parent_phone": "081200001111",
+    })
+    assert reg.status_code == 200, reg.text
+    app_ = reg.json()["applicant"]
+    bill = reg.json()["bill"]
+    st = client.post("/api/actions/ppdb.status", json={"reg_no": app_["reg_no"], "birth_date": "2010-05-05"}).json()
+    assert st["applicant"]["status"] == "baru"
+    assert client.post("/api/actions/ppdb.pay", json={"bill_id": bill["id"], "method": "QRIS"}).status_code == 200
+    h = auth("kesiswaan")
+    client.patch(f"/api/applicants/{app_['id']}", headers=h, json={"status": "diterima", "test_score": 88})
+    classes = client.get("/api/classes?unit_id=3&grade=11", headers=h).json()
+    enr = client.post("/api/actions/ppdb.enroll", headers=h, json={"applicant_id": app_["id"], "class_id": classes[0]["id"]})
+    assert enr.status_code == 200, enr.text
+    # akun siswa baru dapat login
+    login = client.post("/api/auth/login", json={"username": enr.json()["username"], "password": "demo123"})
+    assert login.status_code == 200
+
+
+def test_family_payment_and_ownership(client, auth):
+    h = auth("ortu")
+    bills = [b for b in client.get("/api/bills", headers=h).json() if b["status"] != "lunas"]
+    assert bills
+    b = bills[0]
+    remaining = b["amount"] - b["discount"] - b["paid_amount"]
+    r = client.post("/api/actions/payments.pay", headers=h, json={"bill_id": b["id"], "amount": remaining, "method": "Virtual Account"})
+    assert r.status_code == 200, r.text
+    # tidak boleh membayar tagihan siswa lain
+    other = client.get("/api/bills?status=belum", headers=auth("admin")).json()
+    own_ids = {k["id"] for k in client.get("/api/students", headers=h).json()}
+    foreign = next(x for x in other if x["student_id"] and x["student_id"] not in own_ids)
+    r = client.post("/api/actions/payments.pay", headers=h, json={"bill_id": foreign["id"], "amount": 1, "method": "QRIS"})
+    assert r.status_code == 403
+
+
+def test_overpayment_rejected(client, auth):
+    h = auth("keuangan")
+    b = client.get("/api/bills?status=belum", headers=h).json()[0]
+    r = client.post("/api/actions/payments.pay", headers=h, json={"bill_id": b["id"], "amount": b["amount"] * 2, "method": "Tunai"})
+    assert r.status_code == 400
+
+
+def test_cbt_submit_scores_on_server(client, auth):
+    h = auth("siswa")
+    me = client.get("/api/students", headers=h).json()[0]
+    taken = {r["exam_id"] for r in client.get("/api/exam_results", headers=h).json()}
+    exam = next(e for e in client.get(f"/api/exams?class_id={me['class_id']}", headers=h).json() if e["id"] not in taken)
+    r = client.post("/api/actions/exams.submit", headers=h, json={"exam_id": exam["id"], "student_id": me["id"], "answers": [0] * len(exam["questions"])})
+    assert r.status_code == 200, r.text
+    assert 0 <= r.json()["score"] <= 100 and r.json()["total"] == len(exam["questions"])
+    again = client.post("/api/actions/exams.submit", headers=h, json={"exam_id": exam["id"], "student_id": me["id"], "answers": []})
+    assert again.status_code == 400
+
+
+def test_teacher_attendance_and_grades(client, auth):
+    h = auth("guru")
+    me = client.get("/api/auth/me", headers=h).json()
+    r = client.post("/api/actions/attendance.checkin", headers=h, json={"employee_id": me["employee_id"]})
+    assert r.status_code == 200
+    assert client.post("/api/actions/attendance.checkin", headers=h, json={"employee_id": me["employee_id"]}).status_code == 400
+    # guru tidak boleh presensi atas nama orang lain
+    assert client.post("/api/actions/attendance.checkin", headers=h, json={"employee_id": 1}).status_code == 403
+    sched = client.get(f"/api/schedules?teacher_id={me['employee_id']}", headers=h).json()[0]
+    students = client.get(f"/api/students?class_id={sched['class_id']}", headers=h).json()
+    day = dt.date.today() - dt.timedelta(days=1)
+    r = client.post("/api/actions/attendance.saveClass", headers=h, json={"class_id": sched["class_id"], "date": day.isoformat(), "entries": [{"student_id": s["id"], "status": "H", "note": ""} for s in students]})
+    assert r.json()["saved"] == len(students)
+    ay = next(y for y in client.get("/api/academic_years", headers=h).json() if y["is_active"])
+    r = client.post("/api/actions/grades.save", headers=h, json={"rows": [{"student_id": students[0]["id"], "subject_id": sched["subject_id"], "academic_year_id": ay["id"], "assignment": 90, "daily": 80, "midterm": 70, "final_exam": 100}]})
+    assert r.status_code == 200
+    g = client.get(f"/api/grades?student_id={students[0]['id']}&subject_id={sched['subject_id']}", headers=h).json()[0]
+    assert g["final"] == 87.0  # 27 + 16 + 14 + 30
+
+
+def test_generate_bills_is_idempotent(client, auth):
+    h = auth("keuangan")
+    fee = next(f for f in client.get("/api/fee_types", headers=h).json() if f["name"] == "SPP SMK")
+    first = client.post("/api/actions/bills.generate", headers=h, json={"fee_type_id": fee["id"], "period": "2026-12", "due_date": "2026-12-10"}).json()
+    second = client.post("/api/actions/bills.generate", headers=h, json={"fee_type_id": fee["id"], "period": "2026-12", "due_date": "2026-12-10"}).json()
+    assert first["created"] > 0 and second["created"] == 0 and second["skipped"] == first["created"]
+
+
+def test_promotion_graduates_students(client, auth):
+    h = auth("admin")
+    cls = next(c for c in client.get("/api/classes?unit_id=4&grade=12", headers=h).json())
+    studs = client.get(f"/api/students?class_id={cls['id']}", headers=h).json()
+    ay = next(y for y in client.get("/api/academic_years", headers=h).json() if y["is_active"])
+    r = client.post("/api/actions/promotions.process", headers=h, json={"academic_year_id": ay["id"], "decisions": [{"student_id": s["id"], "result": "lulus", "to_class_id": None} for s in studs]})
+    assert r.json()["processed"] == len(studs)
+    after = client.get(f"/api/students/{studs[0]['id']}", headers=h).json()
+    assert after["status"] == "lulus" and after["class_id"] is None
