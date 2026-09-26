@@ -83,6 +83,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env                 # atur DATABASE_URL & SECRET_KEY
 python -m app.seed                   # buat tabel + data contoh (--reset untuk mengulang)
+# Data contoh bertanggal relatif "hari ini"; perbarui dengan: (cd ../frontend && npm run export-seed)
 uvicorn app.main:app --reload
 
 # Frontend terhubung ke backend
