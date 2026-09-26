@@ -550,6 +550,7 @@ class BookLoan(Base):
     extended: Mapped[bool] = mapped_column(Boolean, default=False)
     fine: Mapped[int] = mapped_column(Integer, default=0)
     fine_paid: Mapped[bool] = mapped_column(Boolean, default=False)
+    bill_id: Mapped[int | None] = mapped_column(FK("bills.id"), nullable=True)  # tagihan denda di keuangan
     processed_by: Mapped[str] = mapped_column(String(150), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
 

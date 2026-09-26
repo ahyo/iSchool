@@ -230,6 +230,7 @@ def payments_pay(db: Session, p: dict, user: Principal):
         ensure_role(user, "admin", "keuangan")
         received_by = user.user.name
     pay = apply_payment(db, bill, int(p.get("amount") or 0), p.get("method") or "Tunai", received_by, p.get("note") or "")
+    _sync_loan_fine(db, bill)
     db.commit()
     return to_dict(pay)
 
@@ -639,6 +640,32 @@ def _late_days(loan: BookLoan) -> int:
     return max(0, ((loan.returned_at or today()) - loan.due_date).days)
 
 
+def _create_fine_bill(db: Session, loan: BookLoan, amount: int) -> Bill:
+    """Tagihan denda perpustakaan untuk peminjam siswa (tercatat di modul keuangan)."""
+    fee = db.scalars(select(FeeType).where(FeeType.category == "denda")).first()
+    if not fee:
+        fee = FeeType(unit_id=None, name="Denda Perpustakaan", category="denda", amount=0, description="Denda keterlambatan pengembalian buku")
+        db.add(fee)
+        db.flush()
+    book = db.get(Book, loan.book_id)
+    bill = Bill(student_id=loan.student_id, applicant_id=None, fee_type_id=fee.id, period=f"{today():%Y-%m}", description=f"Denda perpustakaan: {book.title if book else 'buku'}",
+                amount=amount, discount=0, paid_amount=0, due_date=today() + dt.timedelta(days=7), status="belum", created_at=now())
+    db.add(bill)
+    db.flush()
+    loan.bill_id = bill.id
+    return bill
+
+
+def _sync_loan_fine(db: Session, bill: Bill) -> None:
+    """Bila tagihan denda lunas, tandai denda pada peminjaman sebagai lunas."""
+    if bill.status != "lunas":
+        return
+    db.flush()  # sesi tanpa autoflush: pastikan bill_id terbaru terlihat oleh query
+    loan = db.scalars(select(BookLoan).where(BookLoan.bill_id == bill.id)).first()
+    if loan and not loan.fine_paid:
+        loan.fine_paid = True
+
+
 def library_borrow(db: Session, p: dict, user: Principal):
     ensure_role(user, *LIB_STAFF)
     cfg = _settings(db)
@@ -694,7 +721,13 @@ def library_return(db: Session, p: dict, user: Principal):
     days = _late_days(loan)
     loan.returned_at = today()
     loan.fine = days * _settings(db).library_fine_per_day
-    loan.fine_paid = loan.fine == 0 or bool(p.get("pay_fine"))
+    loan.fine_paid = loan.fine == 0 or (bool(p.get("pay_fine")) and not loan.student_id)
+    if loan.fine and loan.student_id:
+        # Denda siswa masuk ke keuangan; bila dibayar di tempat langsung tercatat sebagai pembayaran
+        bill = _create_fine_bill(db, loan, loan.fine)
+        if p.get("pay_fine"):
+            apply_payment(db, bill, loan.fine, "Tunai", user.user.name, "Denda perpustakaan (dibayar di perpustakaan)")
+        _sync_loan_fine(db, bill)
     db.commit()
     return {**to_dict(loan), "late_days": days}
 
@@ -725,7 +758,14 @@ def library_pay_fine(db: Session, p: dict, user: Principal):
     loan = db.get(BookLoan, int(p.get("loan_id") or 0))
     if not loan or not loan.fine:
         raise HTTPException(400, "Tidak ada denda")
-    loan.fine_paid = True
+    if loan.fine_paid:
+        raise HTTPException(400, "Denda sudah lunas")
+    bill = db.get(Bill, loan.bill_id) if loan.bill_id else None
+    if bill and bill.status != "lunas":
+        apply_payment(db, bill, bill.amount - bill.discount - bill.paid_amount, "Tunai", user.user.name, "Denda perpustakaan (dibayar di perpustakaan)")
+        _sync_loan_fine(db, bill)
+    else:
+        loan.fine_paid = True
     db.commit()
     return to_dict(loan)
 

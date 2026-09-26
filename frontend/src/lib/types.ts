@@ -235,7 +235,7 @@ export interface Grade {
   description: string;
 }
 
-export type FeeCategory = 'bulanan' | 'pendaftaran' | 'ujian' | 'kegiatan' | 'lainnya';
+export type FeeCategory = 'bulanan' | 'pendaftaran' | 'ujian' | 'kegiatan' | 'denda' | 'lainnya';
 
 export interface FeeType {
   id: number;
@@ -513,6 +513,7 @@ export interface BookLoan {
   extended: boolean;
   fine: number;
   fine_paid: boolean;
+  bill_id: number | null; // tagihan denda di modul keuangan (untuk peminjam siswa)
   processed_by: string;
   notes: string;
 }

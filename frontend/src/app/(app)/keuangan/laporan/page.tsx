@@ -25,8 +25,8 @@ export default function LaporanPage() {
 
     const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`);
     const monthly = months.map((m) => ({ label: periodLabel(m).slice(0, 3), value: pays.filter((p) => p.paid_at.startsWith(m)).reduce((a, p) => a + p.amount, 0) }));
-    const cats = ['bulanan', 'pendaftaran', 'ujian', 'kegiatan', 'lainnya'];
-    const catLabel: Record<string, string> = { bulanan: 'SPP Bulanan', pendaftaran: 'Pendaftaran & Pangkal', ujian: 'Ujian', kegiatan: 'Kegiatan', lainnya: 'Lainnya' };
+    const cats = ['bulanan', 'pendaftaran', 'ujian', 'kegiatan', 'denda', 'lainnya'];
+    const catLabel: Record<string, string> = { bulanan: 'SPP Bulanan', pendaftaran: 'Pendaftaran & Pangkal', ujian: 'Ujian', kegiatan: 'Kegiatan', denda: 'Denda Perpustakaan', lainnya: 'Lainnya' };
     const byCat = cats.map((c) => ({ name: catLabel[c], value: pays.filter((p) => fees.get(billIdx.get(p.bill_id)!.fee_type_id)?.category === c).reduce((a, p) => a + p.amount, 0) })).filter((x) => x.value > 0);
     const byUnit = data.units.map((u) => {
       const ub = data.bills.filter((b) => unitOf(b) === u.id);

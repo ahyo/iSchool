@@ -9,7 +9,7 @@ import { indexBy } from '@/lib/scope';
 import { rupiah } from '@/lib/utils';
 import type { FeeType } from '@/lib/types';
 
-const CAT_TONE = { bulanan: 'blue', pendaftaran: 'violet', ujian: 'amber', kegiatan: 'green', lainnya: 'slate' } as const;
+const CAT_TONE = { bulanan: 'blue', pendaftaran: 'violet', ujian: 'amber', kegiatan: 'green', denda: 'red', lainnya: 'slate' } as const;
 
 export default function BiayaPage() {
   const { unitId } = useWorkspace();
@@ -40,7 +40,7 @@ export default function BiayaPage() {
         fields={[
           { name: 'name', label: 'Nama Biaya', required: true, full: true },
           { name: 'unit_id', label: 'Unit', type: 'select', options: data.units.map((u) => ({ value: u.id, label: u.name })), placeholder: 'Semua unit' },
-          { name: 'category', label: 'Kategori', type: 'select', options: ['bulanan', 'pendaftaran', 'ujian', 'kegiatan', 'lainnya'].map((c) => ({ value: c, label: c })), required: true },
+          { name: 'category', label: 'Kategori', type: 'select', options: ['bulanan', 'pendaftaran', 'ujian', 'kegiatan', 'denda', 'lainnya'].map((c) => ({ value: c, label: c })), required: true },
           { name: 'amount', label: 'Nominal (Rp)', type: 'number', required: true },
           { name: 'description', label: 'Keterangan', full: true },
         ]}

@@ -1,6 +1,6 @@
 /* Implementasi aksi bisnis untuk mode demo (dijalankan di browser).
  * Aksi yang sama diimplementasikan di backend FastAPI: POST /api/actions/{name}. */
-import type { Applicant, Bill, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User, Enrollment } from '../types';
+import type { Applicant, Bill, BookLoan, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User, Enrollment } from '../types';
 import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
 import { runImport } from './importer';
@@ -50,6 +50,25 @@ function snapshotEnrollment(student: Student, academicYearId: number, extra: Par
   return existing
     ? patch('enrollments', existing.id, { ...snap, ...extra })
     : insert('enrollments', { student_id: student.id, academic_year_id: academicYearId, result: null, next_class_name: '', ...snap, ...extra });
+}
+
+/** Tagihan denda perpustakaan untuk peminjam siswa (tercatat di modul keuangan). */
+function createFineBill(loan: BookLoan, amount: number) {
+  const d = getDB();
+  let fee = d.fee_types.find((f) => f.category === 'denda');
+  if (!fee) fee = insert('fee_types', { unit_id: null, name: 'Denda Perpustakaan', category: 'denda', amount: 0, description: 'Denda keterlambatan pengembalian buku' });
+  const title = d.books.find((b) => b.id === loan.book_id)?.title || 'buku';
+  const bill = insert('bills', { student_id: loan.student_id, applicant_id: null, fee_type_id: fee.id, period: today().slice(0, 7), description: `Denda perpustakaan: ${title}`, amount, discount: 0, paid_amount: 0, due_date: addDays(today(), 7), status: 'belum', created_at: nowISO() });
+  patch('book_loans', loan.id, { bill_id: bill.id });
+  return bill;
+}
+
+/** Bila tagihan denda lunas, tandai denda pada peminjaman sebagai lunas. */
+function syncLoanFine(billId: number) {
+  const d = getDB();
+  const bill = d.bills.find((b) => b.id === billId);
+  const loan = d.book_loans.find((l) => l.bill_id === billId);
+  if (bill && loan && bill.status === 'lunas' && !loan.fine_paid) patch('book_loans', loan.id, { fine_paid: true });
 }
 
 export const actions: Record<string, Handler> = {
@@ -164,6 +183,7 @@ export const actions: Record<string, Handler> = {
     const bill = getDB().bills.find((b) => b.id === Number(p.bill_id));
     if (!bill) throw new Error('Tagihan tidak ditemukan');
     const pay = applyPayment(bill, Number(p.amount), p.method, user?.role === 'siswa' || user?.role === 'ortu' ? 'Pembayaran Online' : user?.name || 'Petugas', p.note);
+    syncLoanFine(bill.id);
     commit();
     return pay;
   },
@@ -427,7 +447,7 @@ export const actions: Record<string, Handler> = {
     if (active.some((l) => l.due_date < today())) throw new Error('Peminjam masih memiliki buku yang terlambat dikembalikan');
     if (mine.some((l) => l.fine > 0 && !l.fine_paid)) throw new Error('Peminjam masih memiliki denda yang belum dibayar');
     if (active.some((l) => l.book_id === book.id)) throw new Error('Peminjam sedang meminjam buku yang sama');
-    const loan = insert('book_loans', { book_id: book.id, student_id: sid, employee_id: eid, borrowed_at: today(), due_date: addDays(today(), cfg.library_loan_days), returned_at: null, extended: false, fine: 0, fine_paid: false, processed_by: user.name, notes: p.notes || '' });
+    const loan = insert('book_loans', { book_id: book.id, student_id: sid, employee_id: eid, borrowed_at: today(), due_date: addDays(today(), cfg.library_loan_days), returned_at: null, extended: false, fine: 0, fine_paid: false, bill_id: null, processed_by: user.name, notes: p.notes || '' });
     const resv = d.book_reservations.find((r) => r.id === Number(p.reservation_id)) || d.book_reservations.find((r) => r.book_id === book.id && r.status === 'menunggu' && (sid ? r.student_id === sid : r.employee_id === eid));
     if (resv) patch('book_reservations', resv.id, { status: 'dipinjam' });
     commit();
@@ -440,10 +460,17 @@ export const actions: Record<string, Handler> = {
     const loan = d.book_loans.find((l) => l.id === Number(p.loan_id));
     if (!loan) throw new Error('Peminjaman tidak ditemukan');
     if (loan.returned_at) throw new Error('Buku sudah dikembalikan');
-    const fine = lateDays(loan) * d.settings[0].library_fine_per_day;
-    const row = patch('book_loans', loan.id, { returned_at: today(), fine, fine_paid: fine === 0 || !!p.pay_fine });
+    const days = lateDays(loan);
+    const fine = days * d.settings[0].library_fine_per_day;
+    patch('book_loans', loan.id, { returned_at: today(), fine, fine_paid: fine === 0 || (!!p.pay_fine && !loan.student_id) });
+    if (fine > 0 && loan.student_id) {
+      // Denda siswa masuk ke keuangan sebagai tagihan; bila dibayar di tempat langsung tercatat sebagai pembayaran
+      const bill = createFineBill(loan, fine);
+      if (p.pay_fine) applyPayment(bill, fine, 'Tunai', user.name, 'Denda perpustakaan (dibayar di perpustakaan)');
+      syncLoanFine(bill.id);
+    }
     commit();
-    return { ...row, late_days: lateDays(loan) };
+    return { ...getDB().book_loans.find((l) => l.id === loan.id)!, late_days: days };
   },
 
   'library.extend': (p: { loan_id: number }, user) => {
@@ -463,11 +490,17 @@ export const actions: Record<string, Handler> = {
 
   'library.payFine': (p: { loan_id: number }, user) => {
     if (!user || !LIB_STAFF.includes(user.role)) throw new Error('Hanya pustakawan yang dapat mencatat pembayaran denda');
-    const loan = getDB().book_loans.find((l) => l.id === Number(p.loan_id));
+    const d = getDB();
+    const loan = d.book_loans.find((l) => l.id === Number(p.loan_id));
     if (!loan || !loan.fine) throw new Error('Tidak ada denda');
-    const row = patch('book_loans', loan.id, { fine_paid: true });
+    if (loan.fine_paid) throw new Error('Denda sudah lunas');
+    const bill = loan.bill_id ? d.bills.find((b) => b.id === loan.bill_id) : undefined;
+    if (bill && bill.status !== 'lunas') {
+      applyPayment(bill, bill.amount - bill.discount - bill.paid_amount, 'Tunai', user.name, 'Denda perpustakaan (dibayar di perpustakaan)');
+      syncLoanFine(bill.id);
+    } else patch('book_loans', loan.id, { fine_paid: true });
     commit();
-    return row;
+    return getDB().book_loans.find((l) => l.id === loan.id)!;
   },
 
   'library.reserve': (p: { book_id: number }, user) => {

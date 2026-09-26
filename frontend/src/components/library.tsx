@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useState } from 'react';
 import { AlertTriangle, ArrowRightLeft, BookCheck, BookMarked, BookOpen, BookPlus, CalendarClock, Download, Library, Pencil, RotateCcw, Search, Trash2, Users, Wallet, X } from 'lucide-react';
 import { api, useData } from '@/lib/api';
@@ -268,8 +269,9 @@ export function Circulation({ d }: { d: LibData }) {
             {unpaid.map((l) => { const w = borrowerOf(l, d); return (
               <div key={l.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
                 <span className="flex-1"><b>{w.name}</b> <span className="text-slate-500">· {title(l.book_id)} · kembali {fmtDate(l.returned_at)} ({lateDays(l)} hari terlambat)</span></span>
+                {l.bill_id && <Badge tone="violet">Tertagih di Keuangan</Badge>}
                 <span className="font-semibold text-red-600">{rupiah(l.fine)}</span>
-                <Button size="sm" variant="secondary" onClick={() => run(() => api.action('library.payFine', { loan_id: l.id }), 'Denda lunas')}>Lunasi</Button>
+                <Button size="sm" variant="secondary" onClick={() => run(() => api.action('library.payFine', { loan_id: l.id }), 'Denda lunas — pembayaran tercatat di keuangan')}>Lunasi</Button>
               </div>
             ); })}
           </div>
@@ -287,7 +289,8 @@ export function Circulation({ d }: { d: LibData }) {
               {fine > 0 && (
                 <div className="rounded-lg bg-red-50 p-3">
                   <p className="font-semibold text-red-700">Denda {rupiah(fine)}</p>
-                  <label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={ret.pay} onChange={(e) => setRet({ ...ret, pay: e.target.checked })} /> Denda dibayar sekarang</label>
+                  <label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={ret.pay} onChange={(e) => setRet({ ...ret, pay: e.target.checked })} /> Denda dibayar tunai sekarang</label>
+                  {ret.loan.student_id && <p className="mt-2 text-xs text-slate-600">{ret.pay ? 'Pembayaran tercatat sebagai pemasukan di modul Keuangan (kwitansi tersedia).' : 'Denda menjadi tagihan "Denda Perpustakaan" yang dapat dibayar orang tua/siswa lewat menu Tagihan.'}</p>}
                 </div>
               )}
             </div>
@@ -483,7 +486,7 @@ export function MyLoans({ d, who, canAct }: { d: LibData; who: { student_id?: nu
                 <td className="px-4 py-2 font-medium">{book(l.book_id).title}</td>
                 <td>{fmtDate(l.borrowed_at)}</td>
                 <td>{fmtDate(l.returned_at)}</td>
-                <td className="pr-4">{l.fine ? <span className={l.fine_paid ? 'text-slate-500' : 'font-semibold text-red-600'}>Terlambat {lateDays(l)} hari · denda {rupiah(l.fine)} {l.fine_paid ? '(lunas)' : '(belum dibayar)'}</span> : <Badge tone="green">Tepat waktu</Badge>}</td>
+                <td className="pr-4">{l.fine ? <span className={l.fine_paid ? 'text-slate-500' : 'font-semibold text-red-600'}>Terlambat {lateDays(l)} hari · denda {rupiah(l.fine)} {l.fine_paid ? '(lunas)' : '(belum dibayar)'}{!l.fine_paid && l.bill_id && who.student_id && <Link href="/keuangan/tagihan/" className="ml-2 text-brand-600 underline">Bayar online</Link>}</span> : <Badge tone="green">Tepat waktu</Badge>}</td>
               </tr>
             ))}
           </tbody>

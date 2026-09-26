@@ -526,3 +526,32 @@ def test_cbt_pts_locked_without_exam_card(client, auth):
         p = period_for_exam(db, "PTS", dt.date.today(), st.unit_id)
         assert p is not None and not eligibility(db, p, st)["eligible"]
     assert exam["type"] == "PTS"
+
+
+def test_library_fine_becomes_finance_bill_and_parent_pays_online(client, auth):
+    import datetime as dt
+    hp, ho, hk = auth("pustakawan"), auth("ortu"), auth("keuangan")
+    today = dt.date.today().isoformat()
+    late = next((l for l in client.get("/api/book_loans", headers=ho).json() if l["returned_at"] is None and l["due_date"] < today), None)
+    if late is None:  # sudah dikembalikan oleh tes lain: buat skenario baru lewat pinjaman terlambat siswa lain
+        late = next(l for l in client.get("/api/book_loans", headers=hp).json() if l["returned_at"] is None and l["due_date"] < today and l["student_id"])
+    ret = client.post("/api/actions/library.return", headers=hp, json={"loan_id": late["id"], "pay_fine": False}).json()
+    assert ret["fine"] > 0 and not ret["fine_paid"] and ret["bill_id"]
+    bill = client.get(f"/api/bills/{ret['bill_id']}", headers=hk).json()
+    fee = client.get(f"/api/fee_types/{bill['fee_type_id']}", headers=hk).json()
+    assert fee["category"] == "denda" and bill["amount"] == ret["fine"] and bill["status"] == "belum"
+    # dibayar lewat modul keuangan -> denda perpustakaan ikut lunas
+    client.post("/api/actions/payments.pay", headers=hk, json={"bill_id": bill["id"], "amount": bill["amount"], "method": "Tunai"})
+    loan = next(l for l in client.get("/api/book_loans", headers=hp).json() if l["id"] == late["id"])
+    assert loan["fine_paid"]
+
+
+def test_library_fine_paid_at_desk_recorded_as_income(client, auth):
+    import datetime as dt
+    hp, hk = auth("pustakawan"), auth("keuangan")
+    today = dt.date.today().isoformat()
+    late = next(l for l in client.get("/api/book_loans", headers=hp).json() if l["returned_at"] is None and l["due_date"] < today and l["student_id"])
+    ret = client.post("/api/actions/library.return", headers=hp, json={"loan_id": late["id"], "pay_fine": True}).json()
+    assert ret["fine_paid"] and ret["bill_id"]
+    pays = client.get(f"/api/payments?bill_id={ret['bill_id']}", headers=hk).json()
+    assert len(pays) == 1 and pays[0]["amount"] == ret["fine"] and pays[0]["method"] == "Tunai"

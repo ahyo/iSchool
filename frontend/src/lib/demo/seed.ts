@@ -845,7 +845,7 @@ export function buildSeed(): DB {
     const due = addDays(borrowed, 7);
     const returned = active ? null : addDays(due, returnedOffset!);
     const lateDays = returned && returned > due ? Math.round((new Date(returned).getTime() - new Date(due).getTime()) / 86400000) : 0;
-    book_loans.push({ id: ++blid, book_id: book.id, student_id: who.student_id ?? null, employee_id: who.employee_id ?? null, borrowed_at: borrowed, due_date: due, returned_at: returned && returned <= TODAY ? returned : active ? null : TODAY, extended: false, fine: lateDays * 500, fine_paid: lateDays ? rand() < 0.8 : false, processed_by: librarian.name, notes: '' });
+    book_loans.push({ id: ++blid, book_id: book.id, student_id: who.student_id ?? null, employee_id: who.employee_id ?? null, borrowed_at: borrowed, due_date: due, returned_at: returned && returned <= TODAY ? returned : active ? null : TODAY, extended: false, fine: lateDays * 500, fine_paid: lateDays ? rand() < 0.8 : false, bill_id: null, processed_by: librarian.name, notes: '' });
     if (active) onLoan.set(book.id, (onLoan.get(book.id) || 0) + 1);
   };
   const leisure = books.filter((b) => b.category !== 'Buku Pelajaran');
@@ -868,6 +868,20 @@ export function buildSeed(): DB {
   addLoan(bk('Kumpulan Dongeng Nusantara'), { student_id: sibling.id }, addDays(TODAY, -10), null); // terlambat
   addLoan(bk('Sapiens: Riwayat Singkat Umat Manusia (terjemahan)'), { employee_id: unitTeachers[3][0].id }, addDays(TODAY, -3), null);
   book_loans.sort((a, b) => a.borrowed_at.localeCompare(b.borrowed_at)).forEach((l, i) => (l.id = i + 1));
+  // Denda keterlambatan siswa tercatat di keuangan: tagihan "Denda Perpustakaan" (+ pembayaran bila sudah dibayar)
+  const fineFee: FeeType = { id: fee_types.length + 1, unit_id: null, name: 'Denda Perpustakaan', category: 'denda', amount: 0, description: 'Denda keterlambatan pengembalian buku (nominal sesuai hari keterlambatan)' };
+  fee_types.push(fineFee);
+  for (const l of book_loans.filter((x) => x.student_id && x.fine > 0)) {
+    const title = books.find((b) => b.id === l.book_id)!.title;
+    const bill: Bill = { id: bills.length + 1, student_id: l.student_id, applicant_id: null, fee_type_id: fineFee.id, period: l.returned_at!.slice(0, 7), description: `Denda perpustakaan: ${title}`, amount: l.fine, discount: 0, paid_amount: 0, due_date: addDays(l.returned_at!, 7), status: 'belum', created_at: `${l.returned_at}T10:00:00` };
+    bills.push(bill);
+    l.bill_id = bill.id;
+    if (l.fine_paid) {
+      payments.push({ id: payments.length + 1, bill_id: bill.id, student_id: l.student_id, applicant_id: null, amount: l.fine, method: 'Tunai', receipt_no: `KW/${l.returned_at!.slice(0, 7).replace('-', '')}/${pad(80000 + payments.length, 5)}`, paid_at: `${l.returned_at}T10:05:00`, received_by: librarian.name, note: 'Denda perpustakaan' });
+      bill.paid_amount = l.fine;
+      bill.status = 'lunas';
+    }
+  }
   users.push({ id: 8, username: 'pustakawan', password: DEMO_PASSWORD, name: librarian.name, role: 'pustakawan', employee_id: librarian.id, student_id: null, guardian_id: null, is_active: true });
   book_reservations.push(
     { id: 1, book_id: bk('Bumi').id, student_id: demoStudent.id, employee_id: null, user_id: 6, status: 'menunggu', created_at: `${addDays(TODAY, -1)}T19:30:00` },
