@@ -14,10 +14,11 @@ from ..database import get_db
 from ..deps import Principal, bearer, ensure_role, get_principal
 from ..models import (
     AcademicYear, Announcement, Applicant, Bill, Employee, EmployeeAttendance, Event, Exam, ExamResult,
-    Discussion, Enrollment, Extracurricular, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
+    Discussion, Enrollment, Extracurricular, LeaveRequest, FeeType, Grade, Guardian, Lesson, LessonProgress, Major, Payment, Promotion, SchoolClass,
     Setting, Student, StudentAttendance, Submission, Unit, User, VirtualClass,
 )
-from ..security import hash_password
+from ..importer import run_import
+from ..security import hash_password, verify_password
 from ..serialize import to_dict
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -521,6 +522,97 @@ def discussions_pin(db: Session, p: dict, user: Principal):
     return to_dict(row)
 
 
+# ------------------------------------------------------------------ impor, akun, izin
+IMPORT_ROLES = {"siswa": ("admin", "kesiswaan"), "pegawai": ("admin",), "riwayat_kelas": ("admin", "kesiswaan"), "nilai": ("admin", "kesiswaan")}
+
+
+def import_run(db: Session, p: dict, user: Principal):
+    kind = p.get("kind")
+    if kind not in IMPORT_ROLES:
+        raise HTTPException(400, "Jenis impor tidak dikenal")
+    ensure_role(user, *IMPORT_ROLES[kind])
+    rows = p.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(400, "File tidak berisi data")
+    if len(rows) > 20000:
+        raise HTTPException(400, "Maksimal 20.000 baris per impor")
+    return run_import(db, kind, rows, p.get("dry_run") is not False)
+
+
+def auth_change_password(db: Session, p: dict, user: Principal):
+    u = db.get(User, user.user.id)
+    if not verify_password(p.get("old_password") or "", u.password_hash):
+        raise HTTPException(400, "Password lama salah")
+    new = p.get("new_password") or ""
+    if len(new) < 6:
+        raise HTTPException(422, "Password baru minimal 6 karakter")
+    u.password_hash = hash_password(new)
+    db.commit()
+    return {"ok": True}
+
+
+def leave_submit(db: Session, p: dict, user: Principal):
+    sid = int(p.get("student_id") or 0)
+    if not user.is_family or sid not in user.student_ids:
+        raise HTTPException(403, "Anda hanya dapat mengajukan izin untuk anak/diri sendiri")
+    start, end = parse_date(p.get("start_date")), parse_date(p.get("end_date"))
+    if not start or not end or end < start:
+        raise HTTPException(422, "Rentang tanggal tidak valid")
+    if p.get("type") not in ("S", "I"):
+        raise HTTPException(422, "Jenis harus S (sakit) atau I (izin)")
+    reason = (p.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, "Alasan wajib diisi")
+    row = LeaveRequest(student_id=sid, user_id=user.user.id, submitted_by=user.user.name, type=p["type"], start_date=start, end_date=end,
+                       reason=reason, attachment_url=p.get("attachment_url") or "", status="menunggu", created_at=now())
+    db.add(row)
+    db.commit()
+    return to_dict(row)
+
+
+def leave_cancel(db: Session, p: dict, user: Principal):
+    row = db.get(LeaveRequest, int(p.get("id") or 0))
+    if not row or row.user_id != user.user.id:
+        raise HTTPException(404, "Pengajuan tidak ditemukan")
+    if row.status != "menunggu":
+        raise HTTPException(400, "Pengajuan yang sudah diproses tidak dapat dibatalkan")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+def leave_review(db: Session, p: dict, user: Principal):
+    row = db.get(LeaveRequest, int(p.get("id") or 0))
+    if not row:
+        raise HTTPException(404, "Pengajuan tidak ditemukan")
+    st = db.get(Student, row.student_id)
+    cls = db.get(SchoolClass, st.class_id) if st and st.class_id else None
+    is_homeroom = user.role == "guru" and cls is not None and cls.homeroom_id == user.user.employee_id
+    if not (is_homeroom or user.role in ("admin", "kesiswaan")):
+        raise HTTPException(403, "Hanya wali kelas atau bagian kesiswaan yang dapat memproses")
+    if row.status != "menunggu":
+        raise HTTPException(400, "Pengajuan sudah diproses")
+    status = p.get("status")
+    if status not in ("disetujui", "ditolak"):
+        raise HTTPException(422, "Status harus disetujui atau ditolak")
+    row.status, row.review_note, row.reviewed_by, row.reviewed_at = status, p.get("note") or "", user.user.name, now()
+    days = 0
+    if status == "disetujui" and cls:
+        note = f"{'Sakit' if row.type == 'S' else 'Izin'}: {row.reason} (pengajuan online)"
+        d = row.start_date
+        while d <= row.end_date:
+            if d.weekday() < 5:
+                att = db.scalars(select(StudentAttendance).where(StudentAttendance.student_id == st.id, StudentAttendance.date == d)).first()
+                if att:
+                    att.status, att.note = row.type, note
+                else:
+                    db.add(StudentAttendance(date=d, class_id=cls.id, student_id=st.id, status=row.type, note=note))
+                days += 1
+            d += dt.timedelta(days=1)
+    db.commit()
+    return {"ok": True, "days": days}
+
+
 HANDLERS = {
     "public.portal": public_portal,
     "ppdb.register": ppdb_register,
@@ -546,6 +638,11 @@ HANDLERS = {
     "discussions.post": discussions_post,
     "discussions.delete": discussions_delete,
     "discussions.pin": discussions_pin,
+    "import.run": import_run,
+    "auth.changePassword": auth_change_password,
+    "leave.submit": leave_submit,
+    "leave.cancel": leave_cancel,
+    "leave.review": leave_review,
 }
 
 

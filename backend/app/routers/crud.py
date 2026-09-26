@@ -34,9 +34,15 @@ WRITE_ROLES: dict[str, set[str]] = {
     "lessons": {"admin", "guru"}, "virtual_classes": {"admin", "guru"},
     "lesson_progress": ADMIN, "discussions": ADMIN,
     "enrollments": ADMIN,  # diisi lewat aksi arsip / kenaikan kelas
+    "expenses": {"admin", "keuangan"}, "teaching_journals": {"admin", "guru"},
+    "leave_requests": ADMIN,  # lewat aksi leave.submit / leave.review
 }
 # Data yang tidak boleh dilihat siswa/orang tua sama sekali
-STAFF_ONLY_READ = {"applicants"}
+STAFF_ONLY_READ = {"applicants", "teaching_journals"}
+# Data keuangan internal hanya untuk peran berikut
+FINANCE_READ = {"admin", "keuangan", "kepsek"}
+# Guru hanya boleh menulis baris miliknya (kolom pemilik)
+OWNER_FIELD = {"teaching_journals": "teacher_id"}
 
 
 def _model(resource: str):
@@ -52,6 +58,8 @@ def scope_query(stmt, model, p: Principal):
     cols = {c.key for c in inspect(model).mapper.column_attrs}
     if resource == "users" and p.role != "admin":
         return stmt.where(User.id == p.user.id)
+    if resource == "expenses" and p.role not in FINANCE_READ:
+        return stmt.where(False)
     if resource == "employee_attendance" and p.role not in ("admin", "kepsek"):
         return stmt.where(EmployeeAttendance.employee_id == (p.user.employee_id or -1))
     if not p.is_family:
@@ -85,6 +93,12 @@ def ensure_write(resource: str, p: Principal) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Anda tidak memiliki akses untuk mengubah data ini")
 
 
+def ensure_owner(resource: str, obj, p: Principal) -> None:
+    field = OWNER_FIELD.get(resource)
+    if field and p.role == "guru" and getattr(obj, field) != p.user.employee_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Anda hanya dapat mengubah data milik sendiri")
+
+
 @router.get("/{resource}")
 def list_rows(resource: str, request: Request, db: Session = Depends(get_db), p: Principal = Depends(get_principal)):
     model = _model(resource)
@@ -112,6 +126,8 @@ def create_row(resource: str, payload: dict[str, Any], db: Session = Depends(get
     ensure_write(resource, p)
     if model is User and not payload.get("password"):
         raise HTTPException(422, "Password wajib diisi")
+    if p.role == "guru" and resource in OWNER_FIELD:
+        payload = {**payload, OWNER_FIELD[resource]: p.user.employee_id}
     obj = apply_payload(model(), payload, partial=False)
     db.add(obj)
     try:
@@ -130,6 +146,8 @@ def update_row(resource: str, item_id: int, payload: dict[str, Any], db: Session
     obj = db.get(model, item_id)
     if not obj:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Data tidak ditemukan")
+    ensure_owner(resource, obj, p)
+    payload = {k: v for k, v in payload.items() if not (p.role == "guru" and k == OWNER_FIELD.get(resource))}
     apply_payload(obj, payload, partial=True)
     try:
         db.commit()
@@ -147,6 +165,7 @@ def delete_row(resource: str, item_id: int, db: Session = Depends(get_db), p: Pr
     obj = db.get(model, item_id)
     if not obj:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Data tidak ditemukan")
+    ensure_owner(resource, obj, p)
     db.delete(obj)
     try:
         db.commit()

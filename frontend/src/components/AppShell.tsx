@@ -7,6 +7,7 @@ import { navFor, canAccess } from '@/lib/nav';
 import { ROLE_LABEL, STAFF_ROLES, useAuth, useProfile, useWorkspace } from '@/lib/auth';
 import { useData, IS_DEMO } from '@/lib/api';
 import { Avatar, Loading } from './ui';
+import { NotificationBell } from './Notifications';
 import { cn } from '@/lib/utils';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -93,11 +94,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {user.role === 'guru' && profile.employee && <span className="hidden text-sm text-slate-500 sm:inline">{data?.units.find((u) => u.id === profile.employee?.unit_id)?.name}</span>}
         <div className="ml-auto flex items-center gap-3">
           {IS_DEMO && <span className="hidden rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700 sm:inline">MODE DEMO</span>}
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-semibold leading-tight text-slate-800">{user.name}</p>
-            <p className="text-xs text-slate-500">{ROLE_LABEL[user.role]}</p>
-          </div>
-          <Avatar name={user.name} />
+          <NotificationBell />
+          <Link href="/profil/" className="flex items-center gap-3 rounded-lg px-1 hover:bg-slate-50" title="Profil & keamanan">
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-semibold leading-tight text-slate-800">{user.name}</p>
+              <p className="text-xs text-slate-500">{ROLE_LABEL[user.role]}</p>
+            </div>
+            <Avatar name={user.name} />
+          </Link>
           <button
             onClick={() => {
               logout();

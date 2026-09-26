@@ -433,6 +433,53 @@ export interface Enrollment {
   next_class_name: string;
 }
 
+export type ExpenseCategory = 'Gaji & Honor' | 'Operasional' | 'ATK & Bahan Ajar' | 'Pemeliharaan' | 'Kegiatan Siswa' | 'Utilitas' | 'Lainnya';
+
+export interface Expense {
+  id: number;
+  unit_id: number | null;
+  date: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: number;
+  method: 'Tunai' | 'Transfer Bank';
+  receipt_url: string;
+  recorded_by: string;
+  created_at: string;
+}
+
+export interface LeaveRequest {
+  id: number;
+  student_id: number;
+  user_id: number;
+  submitted_by: string;
+  type: 'S' | 'I';
+  start_date: string;
+  end_date: string;
+  reason: string;
+  attachment_url: string;
+  status: 'menunggu' | 'disetujui' | 'ditolak';
+  reviewed_by: string;
+  review_note: string;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export interface TeachingJournal {
+  id: number;
+  teacher_id: number;
+  class_id: number;
+  subject_id: number;
+  date: string;
+  start_time: string;
+  topic: string;
+  activities: string;
+  notes: string;
+  present: number;
+  absent: number;
+  created_at: string;
+}
+
 export interface DB {
   settings: Settings[];
   units: Unit[];
@@ -467,6 +514,9 @@ export interface DB {
   virtual_classes: VirtualClass[];
   discussions: Discussion[];
   enrollments: Enrollment[];
+  expenses: Expense[];
+  leave_requests: LeaveRequest[];
+  teaching_journals: TeachingJournal[];
 }
 
 export type Resource = keyof DB;

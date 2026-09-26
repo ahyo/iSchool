@@ -28,12 +28,17 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 |---|---|
 | Portal sekolah | Profil & visi-misi, jenjang/unit & jurusan, berita/pengumuman publik, agenda, statistik |
 | PPDB & mutasi | Formulir online siswa baru & pindahan (multi-langkah), nomor pendaftaran, cek status, pembayaran biaya daftar, verifikasi & seleksi, daftar ulang otomatis (membuat data siswa, akun siswa & ortu, tagihan uang pangkal), mutasi keluar |
-| Keuangan | Master jenis biaya (SPP bulanan, pendaftaran, uang pangkal, ujian, kegiatan, lainnya), generate tagihan massal per unit/kelas (idempoten), tagihan perorangan, potongan/beasiswa, cicilan, pembayaran tunai/transfer/VA/QRIS, kwitansi + terbilang, pembayaran online oleh siswa/ortu, laporan penerimaan & piutang, ekspor CSV |
+| Keuangan | Master jenis biaya (SPP bulanan, pendaftaran, uang pangkal, ujian, kegiatan, lainnya), generate tagihan massal per unit/kelas (idempoten), tagihan perorangan, potongan/beasiswa, cicilan, pembayaran tunai/transfer/VA/QRIS, kwitansi + terbilang, pembayaran online oleh siswa/ortu, laporan penerimaan & piutang, pencatatan pengeluaran & laporan arus kas (penerimaan vs pengeluaran, saldo), ekspor CSV |
 | Presensi | Presensi siswa harian per kelas (H/S/I/A) + rekap bulanan; presensi guru & pegawai check-in/out dengan deteksi terlambat + rekap |
 | Akademik | Tahun ajaran & semester, kelas/rombel & wali kelas, mata pelajaran & KKTP, jadwal pelajaran (per kelas/per guru, cek bentrok) |
 | Pembelajaran | Materi pelajaran, tugas (pengumpulan, penilaian, umpan balik), ujian & CBT pilihan ganda dengan timer dan penilaian otomatis |
 | E-Learning | Kelas online per mapel-kelas: modul & pelajaran bertahap (bacaan, video YouTube/Vimeo/Drive/MP4, dokumen, kuis dengan nilai otomatis & bisa diulang), draf/publikasi, pelacakan progres per siswa (+ ekspor CSV), kelas virtual (Jitsi/Meet/Zoom/Teams) dengan pencatatan kehadiran & rekaman, forum diskusi (topik, balasan, sematkan, moderasi), dipantau orang tua |
 | Nilai & rapor | Input nilai (tugas, harian, PTS, PAS → nilai akhir berbobot), leger kelas + ranking, rapor siap cetak untuk semester mana pun |
+| Impor data | Impor massal dari Excel/CSV: siswa (+ akun siswa & orang tua otomatis), guru & pegawai, riwayat kelas, dan nilai rapor lama; template Excel dengan petunjuk & referensi kode, pratinjau validasi per baris, upsert (impor ulang = perbarui), unduh daftar error |
+| Izin & sakit online | Orang tua/siswa mengajukan izin atau sakit, wali kelas menyetujui/menolak; presensi otomatis terisi saat disetujui |
+| Jurnal mengajar | Guru mengisi materi & kegiatan per sesi (terisi otomatis dari jadwal & presensi), kepala sekolah memantau keterisian per guru |
+| Notifikasi | Lonceng notifikasi per peran: tagihan jatuh tempo, tenggat tugas, ujian & kelas virtual hari ini, izin menunggu, presensi/jurnal belum diisi, pendaftar baru, pengumuman |
+| Akun | Profil saya & ganti password untuk semua peran |
 | Riwayat akademik | Linimasa kelas siswa dari tahun ke tahun (kelas & wali kelas saat itu, keputusan naik/lulus), tren nilai per semester, rapor setiap semester lampau yang bisa dicetak; arsip semester otomatis saat kenaikan kelas + tombol "Arsipkan Rapor" di Pengaturan |
 | Kenaikan & kelulusan | Rekomendasi otomatis (nilai < KKTP, kehadiran, poin pelanggaran), keputusan naik/tinggal/lulus, riwayat |
 | Kesiswaan | Prestasi, pelanggaran (poin), konseling, ekstrakurikuler |

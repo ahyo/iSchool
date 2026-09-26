@@ -270,3 +270,101 @@ def test_archive_semester_is_idempotent_and_admin_only(client, auth):
     ids = [r["student_id"] for r in rows]
     assert len(ids) == len(set(ids)) >= first["archived"]  # satu arsip per siswa, tanpa duplikat
     assert all(r["class_name"] and r["homeroom_name"] for r in rows)
+
+
+# ------------------------------------------------------------------ impor data
+def test_import_dry_run_then_commit(client, auth):
+    h = auth("admin")
+    rows = [
+        {"nis": "9990001", "nama": "Impor Satu", "jk": "L", "unit": "SD", "kelas": "3A", "tanggal_lahir": "17/05/2017", "nama_ortu": "Ortu Impor", "hp_ortu": "089900000001"},
+        {"nis": "9990002", "nama": "Impor Dua", "jk": "X", "unit": "SD", "kelas": "9Z"},  # error
+        {"nis": "9990001", "nama": "Duplikat", "jk": "P", "unit": "SD", "kelas": "3A"},  # duplikat
+    ]
+    dry = client.post("/api/actions/import.run", headers=h, json={"kind": "siswa", "rows": rows, "dry_run": True}).json()
+    assert dry["created"] == 1 and dry["failed"] == 2 and dry["dry_run"]
+    assert not client.get("/api/students?nis=9990001", headers=h).json()  # belum tersimpan
+    done = client.post("/api/actions/import.run", headers=h, json={"kind": "siswa", "rows": rows, "dry_run": False}).json()
+    assert done["created"] == 1 and done["accounts"] == 2
+    st = client.get("/api/students?nis=9990001", headers=h).json()[0]
+    assert st["birth_date"] == "2017-05-17"
+    assert client.post("/api/auth/login", json={"username": "9990001", "password": "demo123"}).status_code == 200
+    # impor ulang = perbarui, bukan duplikat
+    again = client.post("/api/actions/import.run", headers=h, json={"kind": "siswa", "rows": rows[:1], "dry_run": False}).json()
+    assert again["updated"] == 1 and again["created"] == 0
+
+
+def test_import_history_and_grades_create_academic_year(client, auth):
+    h = auth("admin")
+    hist = client.post("/api/actions/import.run", headers=h, json={"kind": "riwayat_kelas", "dry_run": False, "rows": [
+        {"nis": "9990001", "tahun_ajaran": "2019/2020", "semester": "Genap", "kelas": "1A", "tingkat": 1, "sakit": 2, "keputusan": "naik", "naik_ke": "2A"},
+        {"nis": "0000000", "tahun_ajaran": "2019/2020", "semester": "Genap", "kelas": "1A", "tingkat": 1},
+    ]}).json()
+    assert hist["created"] == 1 and hist["failed"] == 1
+    grades = client.post("/api/actions/import.run", headers=h, json={"kind": "nilai", "dry_run": False, "rows": [
+        {"nis": "9990001", "tahun_ajaran": "2019/2020", "semester": "Genap", "mapel": "MTK", "nilai_tugas": 90, "nilai_harian": 80, "nilai_pts": 70, "nilai_pas": 100},
+        {"nis": "9990001", "tahun_ajaran": "2019/2020", "semester": "Genap", "mapel": "Bahasa Indonesia", "nilai_akhir": "88,5"},
+        {"nis": "9990001", "tahun_ajaran": "2019/2020", "semester": "Genap", "mapel": "KIMIA", "nilai_akhir": 80},
+        {"nis": "9990001", "tahun_ajaran": "2019/2020", "semester": "Genap", "mapel": "PJOK", "nilai_akhir": 120},
+    ]}).json()
+    assert grades["created"] == 2 and grades["failed"] == 2
+    years = client.get("/api/academic_years", headers=h).json()
+    ay = next(y for y in years if y["name"] == "2019/2020" and y["semester"] == "Genap")
+    assert not ay["is_active"]
+    st = client.get("/api/students?nis=9990001", headers=h).json()[0]
+    g = {x["final"] for x in client.get(f"/api/grades?student_id={st['id']}&academic_year_id={ay['id']}", headers=h).json()}
+    assert g == {87.0, 88.5}
+
+
+def test_import_permissions(client, auth):
+    rows = [{"nip": "123", "nama": "X", "jenis": "guru", "jabatan": "Guru"}]
+    assert client.post("/api/actions/import.run", headers=auth("kesiswaan"), json={"kind": "pegawai", "rows": rows}).status_code == 403
+    assert client.post("/api/actions/import.run", headers=auth("guru"), json={"kind": "nilai", "rows": rows}).status_code == 403
+
+
+# ------------------------------------------------------------------ akun, izin, jurnal, pengeluaran
+def test_change_password(client, auth):
+    h = auth("kesiswaan")
+    assert client.post("/api/actions/auth.changePassword", headers=h, json={"old_password": "salah", "new_password": "baru123"}).status_code == 400
+    assert client.post("/api/actions/auth.changePassword", headers=h, json={"old_password": "demo123", "new_password": "baru123"}).status_code == 200
+    assert client.post("/api/auth/login", json={"username": "kesiswaan", "password": "baru123"}).status_code == 200
+    client.post("/api/actions/auth.changePassword", headers=h, json={"old_password": "baru123", "new_password": "demo123"})
+
+
+def test_leave_request_flow_updates_attendance(client, auth):
+    import datetime as dt
+    ho = auth("ortu")
+    kids = client.get("/api/students", headers=ho).json()
+    child = next(k for k in kids if k["name"] == "Rizky Aditya Pratama")
+    day = dt.date.today() + dt.timedelta(days=1)
+    while day.weekday() >= 5:
+        day += dt.timedelta(days=1)
+    r = client.post("/api/actions/leave.submit", headers=ho, json={"student_id": child["id"], "type": "S", "start_date": day.isoformat(), "end_date": day.isoformat(), "reason": "Demam"})
+    assert r.status_code == 200, r.text
+    # ortu tidak boleh mengajukan untuk anak orang lain
+    other = client.get("/api/students?status=aktif", headers=auth("admin")).json()
+    foreign = next(s for s in other if s["id"] not in {k["id"] for k in kids})
+    assert client.post("/api/actions/leave.submit", headers=ho, json={"student_id": foreign["id"], "type": "I", "start_date": day.isoformat(), "end_date": day.isoformat(), "reason": "x"}).status_code == 403
+    # wali kelas lain / keuangan tidak boleh menyetujui
+    assert client.post("/api/actions/leave.review", headers=auth("keuangan"), json={"id": r.json()["id"], "status": "disetujui"}).status_code == 403
+    ok = client.post("/api/actions/leave.review", headers=auth("guru"), json={"id": r.json()["id"], "status": "disetujui", "note": "Semoga cepat sembuh"})
+    assert ok.status_code == 200 and ok.json()["days"] == 1
+    att = client.get(f"/api/student_attendance?student_id={child['id']}&date={day.isoformat()}", headers=ho).json()
+    assert att and att[0]["status"] == "S"
+
+
+def test_teaching_journal_owner_enforced(client, auth):
+    h = auth("guru")
+    me = client.get("/api/auth/me", headers=h).json()
+    sched = client.get(f"/api/schedules?teacher_id={me['employee_id']}", headers=h).json()[0]
+    r = client.post("/api/teaching_journals", headers=h, json={"teacher_id": 1, "class_id": sched["class_id"], "subject_id": sched["subject_id"], "date": "2026-09-01", "start_time": "07:30", "topic": "Uji"})
+    assert r.status_code == 201 and r.json()["teacher_id"] == me["employee_id"]  # teacher_id dipaksa milik sendiri
+    other = next(j for j in client.get("/api/teaching_journals", headers=h).json() if j["teacher_id"] != me["employee_id"])
+    assert client.patch(f"/api/teaching_journals/{other['id']}", headers=h, json={"topic": "ubah"}).status_code == 403
+    assert client.get("/api/teaching_journals", headers=auth("siswa")).json() == []
+
+
+def test_expenses_finance_only(client, auth):
+    assert client.get("/api/expenses", headers=auth("keuangan")).json()
+    assert client.get("/api/expenses", headers=auth("guru")).json() == []
+    assert client.get("/api/expenses", headers=auth("ortu")).json() == []
+    assert client.post("/api/expenses", headers=auth("kesiswaan"), json={"date": "2026-09-01", "category": "Lainnya", "description": "x", "amount": 1}).status_code == 403

@@ -2,7 +2,7 @@ import type {
   DB, Unit, Employee, Subject, SchoolClass, Student, Guardian, Schedule, StudentAttendance,
   EmployeeAttendance, Grade, FeeType, Bill, Payment, Applicant, Announcement, EventItem,
   StudentRecord, Material, Assignment, Submission, Exam, ExamResult, Question, Major, User,
-  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment,
+  Extracurricular, AttendanceStatus, Lesson, LessonProgress, VirtualClass, Discussion, AcademicYear, Enrollment, Expense, LeaveRequest, TeachingJournal,
 } from '../types';
 import { addDays, isWeekend, today, pad, computeFinal } from '../utils';
 
@@ -736,6 +736,61 @@ export function buildSeed(): DB {
     }
   }
 
+  // ---------- Pengeluaran kas ----------
+  const expenses: Expense[] = [];
+  let exid2 = 0;
+  const monthsToDate = ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'].filter((m) => m <= TODAY.slice(0, 7));
+  for (const m of monthsToDate) {
+    const d = (day: number) => `${m}-${pad(Math.min(day, m === TODAY.slice(0, 7) ? Number(TODAY.slice(8, 10)) : 28))}`;
+    for (const u of units) {
+      const add = (category: Expense['category'], description: string, amount: number, day: number, method: Expense['method'] = 'Transfer Bank') =>
+        expenses.push({ id: ++exid2, unit_id: u.id, date: d(day), category, description, amount, method, receipt_url: '', recorded_by: 'Rina Kartika, S.E.', created_at: `${d(day)}T10:00:00` });
+      if (m < TODAY.slice(0, 7) || Number(TODAY.slice(8, 10)) >= 25) add('Gaji & Honor', `Gaji & honor guru/pegawai ${u.code} ${m}`, 14_000_000 + u.id * 1_000_000 + int(0, 10) * 100_000, 25);
+      add('Utilitas', `Listrik, air & internet ${u.code}`, int(25, 40) * 100_000, 5);
+      add('ATK & Bahan Ajar', `ATK, kertas & tinta ${u.code}`, int(8, 18) * 100_000, 8, 'Tunai');
+      if (rand() < 0.5) add('Pemeliharaan', `Perbaikan sarana ${u.code} (AC/meja/kursi)`, int(10, 35) * 100_000, 14, 'Tunai');
+      if (rand() < 0.5) add('Kegiatan Siswa', `Kegiatan ekstrakurikuler & lomba ${u.code}`, int(10, 30) * 100_000, 18);
+    }
+    expenses.push({ id: ++exid2, unit_id: null, date: d(3), category: 'Operasional', description: 'Operasional yayasan (kebersihan & keamanan)', amount: 6_500_000, method: 'Transfer Bank', receipt_url: '', recorded_by: 'Rina Kartika, S.E.', created_at: `${d(3)}T09:00:00` });
+  }
+
+  // ---------- Pengajuan izin/sakit dari orang tua ----------
+  const leave_requests: LeaveRequest[] = [];
+  let lrid = 0;
+  const nextSchoolDay = (() => { let x = addDays(TODAY, 1); while (isWeekend(x)) x = addDays(x, 1); return x; })();
+  leave_requests.push({ id: ++lrid, student_id: demoStudent.id, user_id: 7, submitted_by: demoGuardian.name, type: 'S', start_date: schoolDays[schoolDays.length - 9], end_date: schoolDays[schoolDays.length - 8], reason: 'Demam dan flu, istirahat sesuai anjuran dokter.', attachment_url: '', status: 'disetujui', reviewed_by: unitTeachers[3][0].name, review_note: 'Semoga lekas sembuh.', reviewed_at: `${schoolDays[schoolDays.length - 9]}T08:10:00`, created_at: `${schoolDays[schoolDays.length - 9]}T06:30:00` });
+  leave_requests.push({ id: ++lrid, student_id: demoStudent.id, user_id: 7, submitted_by: demoGuardian.name, type: 'I', start_date: nextSchoolDay, end_date: nextSchoolDay, reason: 'Menghadiri acara pernikahan keluarga di luar kota.', attachment_url: '', status: 'menunggu', reviewed_by: '', review_note: '', reviewed_at: null, created_at: `${TODAY}T07:15:00` });
+  const classmate = activeStudents.find((x) => x.class_id === demoClass.id && x.id !== demoStudent.id)!;
+  leave_requests.push({ id: ++lrid, student_id: classmate.id, user_id: 0, submitted_by: guardians.find((g) => g.id === classmate.guardian_id)!.name, type: 'S', start_date: nextSchoolDay, end_date: addDays(nextSchoolDay, 1), reason: 'Sakit gigi, jadwal kontrol ke dokter gigi.', attachment_url: '', status: 'menunggu', reviewed_by: '', review_note: '', reviewed_at: null, created_at: `${TODAY}T06:50:00` });
+  for (let i = 0; i < 8; i++) {
+    const st = pick(activeStudents);
+    const day = schoolDays[int(0, schoolDays.length - 3)];
+    const approved = rand() < 0.85;
+    leave_requests.push({ id: ++lrid, student_id: st.id, user_id: 0, submitted_by: guardians.find((g) => g.id === st.guardian_id)?.name || 'Orang tua', type: rand() < 0.6 ? 'S' : 'I', start_date: day, end_date: day, reason: pick(['Sakit demam', 'Keperluan keluarga', 'Kontrol ke dokter', 'Sakit perut']), attachment_url: '', status: approved ? 'disetujui' : 'ditolak', reviewed_by: employees.find((e) => e.id === classes.find((c) => c.id === st.class_id)?.homeroom_id)?.name || '-', review_note: approved ? '' : 'Mohon lampirkan surat keterangan.', reviewed_at: `${day}T09:00:00`, created_at: `${day}T06:30:00` });
+  }
+
+  // ---------- Jurnal mengajar ----------
+  const teaching_journals: TeachingJournal[] = [];
+  let tjid = 0;
+  const demoTeacherId = unitTeachers[3][0].id;
+  const TOPICS = ['Pembahasan konsep dasar', 'Latihan soal & diskusi kelompok', 'Presentasi hasil kerja kelompok', 'Pembahasan tugas & remedial', 'Penerapan konsep pada kasus nyata', 'Ulangan harian & pembahasan'];
+  for (const day of schoolDays.slice(-10)) {
+    if (day === TODAY) continue;
+    const dow = new Date(day + 'T00:00:00').getDay();
+    for (const sc of schedules.filter((x) => x.day === dow)) {
+      const isDemo = sc.teacher_id === demoTeacherId;
+      if (!isDemo && (day < schoolDays[schoolDays.length - 6] || rand() > 0.7)) continue;
+      const att = student_attendance.filter((a) => a.class_id === sc.class_id && a.date === day);
+      const sub = subjects.find((x) => x.id === sc.subject_id)!;
+      teaching_journals.push({
+        id: ++tjid, teacher_id: sc.teacher_id, class_id: sc.class_id, subject_id: sc.subject_id, date: day, start_time: sc.start_time,
+        topic: `${sub.name}: ${pick(TOPICS)}`, activities: 'Apersepsi, penjelasan materi, latihan terbimbing, refleksi.',
+        notes: rand() < 0.2 ? 'Beberapa siswa perlu pendampingan tambahan.' : '', present: att.filter((a) => a.status === 'H').length, absent: att.filter((a) => a.status !== 'H').length,
+        created_at: `${day}T${sc.end_time}:00`,
+      });
+    }
+  }
+
   return {
     settings: [{
       id: 1, name: 'Yayasan Pendidikan Nusantara Cendekia', foundation: 'Yayasan Nusantara Cendekia', address: 'Jl. Pendidikan No. 1-5, Kebayoran Baru, Jakarta Selatan 12110',
@@ -748,6 +803,7 @@ export function buildSeed(): DB {
     student_attendance, employee_attendance, materials, assignments, submissions, exams, exam_results, grades,
     fee_types, bills, payments, applicants, announcements, events, student_records, promotions: [], extracurriculars,
     lessons, lesson_progress, virtual_classes, discussions, enrollments,
+    expenses, leave_requests, teaching_journals,
   };
 }
 

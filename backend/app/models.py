@@ -468,6 +468,55 @@ class Enrollment(Base):
     next_class_name: Mapped[str] = mapped_column(String(40), default="")
 
 
+class Expense(Base):
+    __tablename__ = "expenses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    unit_id: Mapped[int | None] = mapped_column(FK("units.id"), nullable=True)
+    date: Mapped[dt.date] = mapped_column(Date, index=True)
+    category: Mapped[str] = mapped_column(String(40))
+    description: Mapped[str] = mapped_column(String(250))
+    amount: Mapped[int] = mapped_column(Integer)
+    method: Mapped[str] = mapped_column(String(20), default="Transfer Bank")
+    receipt_url: Mapped[str] = mapped_column(String(500), default="")
+    recorded_by: Mapped[str] = mapped_column(String(150), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class LeaveRequest(Base):
+    """Pengajuan izin/sakit online oleh orang tua/siswa, disetujui wali kelas."""
+    __tablename__ = "leave_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0)
+    submitted_by: Mapped[str] = mapped_column(String(150), default="")
+    type: Mapped[str] = mapped_column(String(1))  # S | I
+    start_date: Mapped[dt.date] = mapped_column(Date)
+    end_date: Mapped[dt.date] = mapped_column(Date)
+    reason: Mapped[str] = mapped_column(Text)
+    attachment_url: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(10), default="menunggu")  # menunggu | disetujui | ditolak
+    reviewed_by: Mapped[str] = mapped_column(String(150), default="")
+    review_note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
+class TeachingJournal(Base):
+    __tablename__ = "teaching_journals"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), index=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
+    date: Mapped[dt.date] = mapped_column(Date, index=True)
+    start_time: Mapped[str] = mapped_column(String(5), default="")
+    topic: Mapped[str] = mapped_column(String(250))
+    activities: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    present: Mapped[int] = mapped_column(Integer, default=0)
+    absent: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
+
+
 # Resource REST -> model (urutan = urutan aman untuk seeding karena foreign key)
 RESOURCES: dict[str, type[Base]] = {
     "settings": Setting,
@@ -503,4 +552,7 @@ RESOURCES: dict[str, type[Base]] = {
     "virtual_classes": VirtualClass,
     "discussions": Discussion,
     "enrollments": Enrollment,
+    "expenses": Expense,
+    "leave_requests": LeaveRequest,
+    "teaching_journals": TeachingJournal,
 }

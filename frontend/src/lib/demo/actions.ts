@@ -3,7 +3,9 @@
 import type { Applicant, Bill, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User, Enrollment } from '../types';
 import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
-import { computeFinal, nowISO, nowTime, pad, today, addDays } from '../utils';
+import { runImport } from './importer';
+import type { ImportKind } from '../importSpec';
+import { computeFinal, nowISO, nowTime, pad, today, addDays, isWeekend } from '../utils';
 
 type Handler = (p: any, user: User | null) => unknown;
 
@@ -333,6 +335,71 @@ export const actions: Record<string, Handler> = {
     active.forEach((s) => snapshotEnrollment(s, p.id));
     commit();
     return { archived: active.length };
+  },
+
+  'import.run': (p: { kind: ImportKind; rows: Record<string, unknown>[]; dry_run?: boolean }, user) => {
+    const allowed: Record<ImportKind, string[]> = { siswa: ['admin', 'kesiswaan'], pegawai: ['admin'], riwayat_kelas: ['admin', 'kesiswaan'], nilai: ['admin', 'kesiswaan'] };
+    if (!user || !allowed[p.kind]?.includes(user.role)) throw new Error('Anda tidak memiliki akses untuk impor data ini');
+    if (!Array.isArray(p.rows) || !p.rows.length) throw new Error('File tidak berisi data');
+    if (p.rows.length > 20000) throw new Error('Maksimal 20.000 baris per impor');
+    return runImport(p.kind, p.rows, p.dry_run !== false);
+  },
+
+  'auth.changePassword': (p: { old_password: string; new_password: string }, user) => {
+    const u = getDB().users.find((x) => x.id === user?.id);
+    if (!u) throw new Error('Sesi tidak valid');
+    if (u.password !== p.old_password) throw new Error('Password lama salah');
+    if (!p.new_password || p.new_password.length < 6) throw new Error('Password baru minimal 6 karakter');
+    patch('users', u.id, { password: p.new_password });
+    commit();
+    return { ok: true };
+  },
+
+  'leave.submit': (p: { student_id: number; type: 'S' | 'I'; start_date: string; end_date: string; reason: string; attachment_url?: string }, user) => {
+    const d = getDB();
+    const st = d.students.find((s) => s.id === Number(p.student_id));
+    const allowed = st && ((user?.role === 'ortu' && st.guardian_id === user.guardian_id) || (user?.role === 'siswa' && user.student_id === st.id));
+    if (!allowed) throw new Error('Anda hanya dapat mengajukan izin untuk anak/diri sendiri');
+    if (!p.start_date || !p.end_date || p.end_date < p.start_date) throw new Error('Rentang tanggal tidak valid');
+    if (!p.reason?.trim()) throw new Error('Alasan wajib diisi');
+    const row = insert('leave_requests', { student_id: st!.id, user_id: user!.id, submitted_by: user!.name, type: p.type, start_date: p.start_date, end_date: p.end_date, reason: p.reason.trim(), attachment_url: p.attachment_url || '', status: 'menunggu', reviewed_by: '', review_note: '', reviewed_at: null, created_at: nowISO() });
+    commit();
+    return row;
+  },
+
+  'leave.cancel': (p: { id: number }, user) => {
+    const lr = getDB().leave_requests.find((x) => x.id === p.id);
+    if (!lr || lr.user_id !== user?.id) throw new Error('Pengajuan tidak ditemukan');
+    if (lr.status !== 'menunggu') throw new Error('Pengajuan yang sudah diproses tidak dapat dibatalkan');
+    removeRow('leave_requests', lr.id);
+    commit();
+    return { ok: true };
+  },
+
+  'leave.review': (p: { id: number; status: 'disetujui' | 'ditolak'; note?: string }, user) => {
+    const d = getDB();
+    const lr = d.leave_requests.find((x) => x.id === p.id);
+    if (!lr) throw new Error('Pengajuan tidak ditemukan');
+    const st = d.students.find((s) => s.id === lr.student_id)!;
+    const cls = d.classes.find((c) => c.id === st.class_id);
+    const isHomeroom = user?.role === 'guru' && cls?.homeroom_id === user.employee_id;
+    if (!user || !(isHomeroom || ['admin', 'kesiswaan'].includes(user.role))) throw new Error('Hanya wali kelas atau bagian kesiswaan yang dapat memproses');
+    if (lr.status !== 'menunggu') throw new Error('Pengajuan sudah diproses');
+    patch('leave_requests', lr.id, { status: p.status, review_note: p.note || '', reviewed_by: user.name, reviewed_at: nowISO() });
+    let days = 0;
+    if (p.status === 'disetujui' && cls) {
+      // Isi presensi otomatis untuk setiap hari sekolah dalam rentang izin
+      for (let day = lr.start_date; day <= lr.end_date; day = addDays(day, 1)) {
+        if (isWeekend(day)) continue;
+        const ex = d.student_attendance.find((a) => a.student_id === st.id && a.date === day);
+        const note = `${lr.type === 'S' ? 'Sakit' : 'Izin'}: ${lr.reason} (pengajuan online)`;
+        if (ex) patch('student_attendance', ex.id, { status: lr.type, note });
+        else insert('student_attendance', { date: day, class_id: cls.id, student_id: st.id, status: lr.type, note });
+        days++;
+      }
+    }
+    commit();
+    return { ok: true, days };
   },
 
   'academic_years.activate': (p: { id: number }) => {

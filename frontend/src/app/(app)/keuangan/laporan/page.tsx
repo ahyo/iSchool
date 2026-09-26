@@ -10,7 +10,7 @@ import { compactRupiah, downloadCSV, periodLabel, round, rupiah, today } from '@
 
 export default function LaporanPage() {
   const { unitId } = useWorkspace();
-  const { data } = useData(['payments', 'bills', 'students', 'applicants', 'classes', 'fee_types', 'units']);
+  const { data } = useData(['payments', 'bills', 'students', 'applicants', 'classes', 'fee_types', 'units', 'expenses']);
   const [year, setYear] = useState(today().slice(0, 4));
 
   const r = useMemo(() => {
@@ -44,7 +44,16 @@ export default function LaporanPage() {
     const target = bills.reduce((a, b) => a + b.amount - b.discount, 0);
     const paid = bills.reduce((a, b) => a + b.paid_amount, 0);
     const discount = bills.reduce((a, b) => a + b.discount, 0);
-    return { monthly, byCat, byUnit, classes, target, paid, discount, yearTotal: pays.reduce((a, p) => a + p.amount, 0) };
+    const exps = data.expenses.filter((e) => e.date.startsWith(year) && (!unitId || e.unit_id === unitId || e.unit_id === null));
+    const cashflow = months.map((m) => {
+      const masuk = pays.filter((p) => p.paid_at.startsWith(m)).reduce((a, p) => a + p.amount, 0);
+      const keluar = exps.filter((e) => e.date.startsWith(m)).reduce((a, e) => a + e.amount, 0);
+      return { m, label: periodLabel(m).slice(0, 3), Penerimaan: masuk, Pengeluaran: keluar };
+    });
+    let saldo = 0;
+    const cashTable = cashflow.filter((c) => c.Penerimaan || c.Pengeluaran).map((c) => ({ ...c, net: c.Penerimaan - c.Pengeluaran, saldo: (saldo += c.Penerimaan - c.Pengeluaran) }));
+    const expenseTotal = exps.reduce((a, e) => a + e.amount, 0);
+    return { monthly, byCat, byUnit, classes, target, paid, discount, yearTotal: pays.reduce((a, p) => a + p.amount, 0), cashflow, cashTable, expenseTotal };
   }, [data, unitId, year]);
 
   if (!data || !r) return <Loading />;
@@ -64,6 +73,26 @@ export default function LaporanPage() {
       <div className="mb-4 grid gap-4 lg:grid-cols-3">
         <Card title={`Penerimaan per Bulan ${year}`} className="lg:col-span-2"><BarsChart data={r.monthly} bars={[{ key: 'value', name: 'Penerimaan' }]} format={(v) => compactRupiah(v).replace('Rp ', '')} /></Card>
         <Card title="Komposisi Penerimaan"><DonutChart data={r.byCat} format={(v) => compactRupiah(v)} /></Card>
+      </div>
+      <div className="mb-4 grid gap-4 lg:grid-cols-3">
+        <Card title={`Arus Kas ${year}: Penerimaan vs Pengeluaran`} className="lg:col-span-2">
+          <BarsChart data={r.cashflow} bars={[{ key: 'Penerimaan', name: 'Penerimaan' }, { key: 'Pengeluaran', name: 'Pengeluaran' }]} format={(v) => compactRupiah(v).replace('Rp ', '')} />
+        </Card>
+        <Card title="Ringkasan Arus Kas" bodyClass="p-0">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="px-4 py-2">Bulan</th><th className="text-right">Selisih</th><th className="pr-4 text-right">Saldo</th></tr></thead>
+            <tbody>
+              {r.cashTable.map((c) => (
+                <tr key={c.m} className="border-b border-slate-100">
+                  <td className="px-4 py-2">{periodLabel(c.m)}</td>
+                  <td className={`text-right font-medium ${c.net >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{c.net >= 0 ? '+' : '−'}{compactRupiah(Math.abs(c.net))}</td>
+                  <td className="pr-4 text-right font-semibold">{c.saldo < 0 ? '−' : ''}{compactRupiah(Math.abs(c.saldo))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="px-4 py-3 text-xs text-slate-500">Total pengeluaran {year}: <b>{rupiah(r.expenseTotal)}</b>. Detail di menu Pengeluaran.</p>
+        </Card>
       </div>
       <Card title="Terbayar vs Piutang per Unit" className="mb-4"><BarsChart data={r.byUnit} bars={[{ key: 'Terbayar', name: 'Terbayar' }, { key: 'Piutang', name: 'Piutang' }]} stacked format={(v) => compactRupiah(v).replace('Rp ', '')} /></Card>
       <Card title="Tingkat Pelunasan per Kelas" bodyClass="p-0">
