@@ -7,7 +7,7 @@ import { Button, Card, DataTable, Field, Input, Loading, Modal, PageHeader, Sear
 import { FormModal } from '@/components/FormModal';
 import { ReceiptModal } from '@/components/Receipt';
 import { indexBy, sortClasses } from '@/lib/scope';
-import { cn, downloadCSV, fmtDate, fmtDateTime, nowISO, periodLabel, rupiah, today } from '@/lib/utils';
+import { cn, compactRupiah, downloadCSV, fmtDate, fmtDateTime, nowISO, periodLabel, rupiah, today } from '@/lib/utils';
 import type { Bill, Payment } from '@/lib/types';
 
 const remaining = (b: Bill) => b.amount - b.discount - b.paid_amount;
@@ -185,9 +185,9 @@ function StaffBills() {
         {canEdit && <Button onClick={() => setGen({ period: today().slice(0, 7), due_date: `${today().slice(0, 7)}-10` })}><Layers className="h-4 w-4" /> Generate Tagihan Massal</Button>}
       </>} />
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Total Tagihan (filter)" value={rupiah(totals.tagihan)} tone="blue" hint={`${rows.length} tagihan`} />
-        <StatCard label="Terbayar" value={rupiah(totals.terbayar)} tone="green" />
-        <StatCard label="Sisa / Piutang" value={rupiah(totals.sisa)} tone="red" />
+        <StatCard label="Total Tagihan (filter)" value={compactRupiah(totals.tagihan)} tone="blue" hint={`${rupiah(totals.tagihan)} · ${rows.length} tagihan`} />
+        <StatCard label="Terbayar" value={compactRupiah(totals.terbayar)} tone="green" hint={rupiah(totals.terbayar)} />
+        <StatCard label="Sisa / Piutang" value={compactRupiah(totals.sisa)} tone="red" hint={rupiah(totals.sisa)} />
       </div>
       <Card>
         <div className="mb-4 flex flex-wrap gap-2">

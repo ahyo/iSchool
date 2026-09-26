@@ -6,7 +6,7 @@ import { useWorkspace } from '@/lib/auth';
 import { Badge, Button, Card, DataTable, Input, Loading, PageHeader, SearchInput, Select, StatCard, type Column } from '@/components/ui';
 import { ReceiptModal } from '@/components/Receipt';
 import { indexBy } from '@/lib/scope';
-import { addDays, downloadCSV, fmtDateTime, rupiah, today } from '@/lib/utils';
+import { addDays, compactRupiah, downloadCSV, fmtDateTime, rupiah, today } from '@/lib/utils';
 import type { Payment } from '@/lib/types';
 
 export default function PembayaranPage() {
@@ -54,8 +54,8 @@ export default function PembayaranPage() {
     <>
       <PageHeader title="Pembayaran" subtitle="Jurnal penerimaan kas dari siswa dan pendaftar" actions={<Button variant="secondary" onClick={() => downloadCSV(`pembayaran-${from}-${to}.csv`, [['No Kwitansi', 'Waktu', 'NIS', 'Nama', 'Tagihan', 'Metode', 'Jumlah', 'Petugas'], ...rows.map((p) => [p.receipt_no, p.paid_at, st.get(p.student_id || 0)?.nis, st.get(p.student_id || 0)?.name || ap.get(p.applicant_id || 0)?.name, bills.get(p.bill_id)?.description, p.method, p.amount, p.received_by])])}><Download className="h-4 w-4" /> CSV</Button>} />
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-5">
-        <StatCard label="Total Penerimaan" value={rupiah(total)} tone="green" hint={`${rows.length} transaksi`} />
-        {byMethod.map((x) => <StatCard key={x.m} label={x.m} value={rupiah(x.v)} tone="slate" />)}
+        <StatCard label="Total Penerimaan" value={compactRupiah(total)} tone="green" hint={`${rupiah(total)} · ${rows.length} transaksi`} />
+        {byMethod.map((x) => <StatCard key={x.m} label={x.m} value={compactRupiah(x.v)} tone="slate" hint={rupiah(x.v)} />)}
       </div>
       <Card>
         <div className="mb-4 flex flex-wrap items-center gap-2">
