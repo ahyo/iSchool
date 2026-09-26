@@ -129,7 +129,7 @@ export const Input = (props: React.InputHTMLAttributes<HTMLInputElement>) => <in
 export const Textarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea rows={3} {...props} className={cn(inputCls, widthCls(props.className), props.className)} />;
 export function Select({ options, placeholder, className, ...props }: React.SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string | number; label: string }[]; placeholder?: string }) {
   return (
-    <select {...props} className={cn(inputCls, widthCls(className), 'pr-8', className)}>
+    <select {...props} className={cn(inputCls, widthCls(className), className)}>
       {placeholder !== undefined && <option value="">{placeholder}</option>}
       {options.map((o) => (
         <option key={o.value} value={o.value}>

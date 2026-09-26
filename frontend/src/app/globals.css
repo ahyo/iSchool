@@ -10,3 +10,30 @@ body { @apply bg-slate-50 text-slate-800 antialiased; }
   body { background: white; }
   .print-area { box-shadow: none !important; border: none !important; }
 }
+
+/* Dropdown: samakan tampilan dengan input (hilangkan gaya bawaan browser, panah kustom) */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E");
+  background-position: right 0.6rem center;
+  background-repeat: no-repeat;
+  background-size: 1.1rem 1.1rem;
+  padding-right: 2.25rem !important;
+  line-height: 1.25rem;
+  text-overflow: ellipsis;
+}
+select:disabled { background-color: #f1f5f9; cursor: not-allowed; }
+select::-ms-expand { display: none; }
+
+/* Input tanggal/waktu/bulan: samakan tinggi dengan input & dropdown */
+input[type='date'], input[type='month'], input[type='time'] { line-height: 1.25rem; }
+input[type='date']::-webkit-datetime-edit,
+input[type='month']::-webkit-datetime-edit,
+input[type='time']::-webkit-datetime-edit { padding: 0; }
+input[type='date']::-webkit-datetime-edit-fields-wrapper,
+input[type='month']::-webkit-datetime-edit-fields-wrapper,
+input[type='time']::-webkit-datetime-edit-fields-wrapper { padding: 0; }
+input::-webkit-calendar-picker-indicator { margin: 0; padding: 0; opacity: 0.6; cursor: pointer; }

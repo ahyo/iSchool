@@ -75,7 +75,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Menu className="h-5 w-5" />
         </button>
         {isStaff && data && (
-          <select value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-500/20">
+          <select value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className="max-w-[16rem] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
             <option value={0}>Semua Unit</option>
             {data.units.map((u) => (
               <option key={u.id} value={u.id}>{u.name}</option>
@@ -83,7 +83,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </select>
         )}
         {user.role === 'ortu' && profile.children.length > 0 && (
-          <select value={profile.student?.id} onChange={(e) => setChildId(Number(e.target.value))} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-medium">
+          <select value={profile.student?.id} onChange={(e) => setChildId(Number(e.target.value))} className="max-w-[18rem] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
             {profile.children.map((c) => (
               <option key={c.id} value={c.id}>{c.name} ({className(c.class_id) || '-'})</option>
             ))}
