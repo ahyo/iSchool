@@ -1,12 +1,13 @@
 /* Implementasi aksi bisnis untuk mode demo (dijalankan di browser).
  * Aksi yang sama diimplementasikan di backend FastAPI: POST /api/actions/{name}. */
-import type { Applicant, Bill, BookLoan, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User, Enrollment } from '../types';
+import type { AnswerValue, Applicant, Bill, BookLoan, Payment, Promotion, Student, AttendanceStatus, EmployeeAttendance, User, Enrollment } from '../types';
 import { getDB, insert, patch, commit, resetDB, removeRow } from './store';
 import { DEMO_PASSWORD } from './seed';
 import { runImport } from './importer';
 import { availableCopies, lateDays, LIB_STAFF } from '../library';
 import { demoToken, examEligibility, parseCardPayload, periodForExam, QR_PREFIX } from '../examcard';
 import { at, availability, effectiveScore } from '../cbt';
+import { emptyAnswer, isAnswered, publicQuestion, qPoints, qType, scoreAnswers } from '../scoring';
 import type { ImportKind } from '../importSpec';
 import { computeFinal, fmtDate, nowISO, nowTime, pad, today, addDays, isWeekend } from '../utils';
 
@@ -88,15 +89,14 @@ function syncLoanFine(billId: number) {
 const toLocalISO = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 
 /** Nilai & simpan hasil sebuah sesi CBT. */
-function finalizeAttempt(attemptId: number, answers: number[]) {
+function finalizeAttempt(attemptId: number, answers: AnswerValue[]) {
   const d = getDB();
   const a = d.exam_attempts.find((x) => x.id === attemptId)!;
   const exam = d.exams.find((e) => e.id === a.exam_id)!;
-  const correct = exam.questions.filter((q, i) => answers[i] === q.answer).length;
-  const score = exam.questions.length ? Math.round((correct / exam.questions.length) * 100) : 0;
+  const r = scoreAnswers(exam.questions, answers);
   patch('exam_attempts', a.id, { answers, submitted_at: nowISO() });
-  const row = insert('exam_results', { exam_id: exam.id, student_id: a.student_id, answers, score, submitted_at: nowISO(), kind: a.kind });
-  return { ...row, correct, total: exam.questions.length };
+  const row = insert('exam_results', { exam_id: exam.id, student_id: a.student_id, answers, score: r.score, submitted_at: nowISO(), kind: a.kind, points: r.points, pending_essay: r.pending_essay });
+  return { ...row, correct: r.correct, total: r.total, pending_essay: r.pending_essay };
 }
 
 /** Sesi yang melewati batas waktu dikumpulkan otomatis dengan jawaban tersimpan. */
@@ -301,15 +301,15 @@ export const actions: Record<string, Handler> = {
       const byDuration = new Date(now.getTime() + exam.duration * 60000);
       const close = at(av.session.date, av.session.end_time);
       const deadline = byDuration < close ? byDuration : close;
-      attempt = insert('exam_attempts', { exam_id: exam.id, student_id: st.id, kind: av.session.kind, window_id: av.session.window_id, started_at: nowISO(), deadline: toLocalISO(deadline), answers: exam.questions.map(() => -1), submitted_at: null });
+      attempt = insert('exam_attempts', { exam_id: exam.id, student_id: st.id, kind: av.session.kind, window_id: av.session.window_id, started_at: nowISO(), deadline: toLocalISO(deadline), answers: exam.questions.map(emptyAnswer), submitted_at: null });
       commit();
     } else if (av.state === 'upcoming') throw new Error(`Ujian dibuka ${fmtDate(av.session.date)} pukul ${av.session.start_time}`);
     else if (av.state === 'done') throw new Error('Anda sudah mengerjakan ujian ini');
     else throw new Error(av.reason);
-    return { attempt, questions: exam.questions.map((q) => ({ q: q.q, options: q.options, answer: -1 })), server_now: nowISO() };
+    return { attempt, questions: exam.questions.map(publicQuestion), server_now: nowISO() };
   },
 
-  'exams.saveAnswers': (p: { attempt_id: number; answers: number[] }, user) => {
+  'exams.saveAnswers': (p: { attempt_id: number; answers: AnswerValue[] }, user) => {
     const a = getDB().exam_attempts.find((x) => x.id === Number(p.attempt_id));
     if (!a || user?.role !== 'siswa' || user.student_id !== a.student_id) throw new Error('Sesi ujian tidak ditemukan');
     if (a.submitted_at) throw new Error('Ujian sudah dikumpulkan');
@@ -319,7 +319,7 @@ export const actions: Record<string, Handler> = {
     return { saved: true };
   },
 
-  'exams.submit': (p: { attempt_id: number; answers?: number[] }, user) => {
+  'exams.submit': (p: { attempt_id: number; answers?: AnswerValue[] }, user) => {
     const d = getDB();
     const a = d.exam_attempts.find((x) => x.id === Number(p.attempt_id));
     if (!a || user?.role !== 'siswa' || user.student_id !== a.student_id) throw new Error('Sesi ujian tidak ditemukan');
@@ -329,6 +329,26 @@ export const actions: Record<string, Handler> = {
     const res = finalizeAttempt(a.id, answers);
     commit();
     return res;
+  },
+
+  'exams.gradeEssay': (p: { result_id: number; points: Record<string, number | null> }, user) => {
+    const d = getDB();
+    const res = d.exam_results.find((r) => r.id === Number(p.result_id));
+    const exam = res && d.exams.find((e) => e.id === res.exam_id);
+    if (!res || !exam) throw new Error('Hasil ujian tidak ditemukan');
+    if (!user || !(user.role === 'admin' || (user.role === 'guru' && exam.teacher_id === user.employee_id))) throw new Error('Hanya guru pengampu yang dapat mengoreksi');
+    const essay = [...(res.points || exam.questions.map(() => null))];
+    for (const [k, v] of Object.entries(p.points || {})) {
+      const i = Number(k);
+      const q = exam.questions[i];
+      if (!q || qType(q) !== 'esai') continue;
+      if (v !== null && (typeof v !== 'number' || v < 0 || v > qPoints(q))) throw new Error(`Nilai soal ${i + 1} harus 0–${qPoints(q)}`);
+      essay[i] = v;
+    }
+    const r = scoreAnswers(exam.questions, res.answers, essay.map((x, i) => (qType(exam.questions[i]) === 'esai' ? x : null)));
+    const row = patch('exam_results', res.id, { score: r.score, points: r.points, pending_essay: r.pending_essay });
+    commit();
+    return row;
   },
 
   'exams.windowCreate': (p: { exam_id: number; kind: 'susulan' | 'remedial'; date: string; start_time: string; end_time: string; student_ids: number[]; notes?: string }, user) => {
@@ -405,7 +425,7 @@ export const actions: Record<string, Handler> = {
     return row;
   },
 
-  'elearning.complete': (p: { lesson_id: number; student_id: number; answers?: number[] }, user) => {
+  'elearning.complete': (p: { lesson_id: number; student_id: number; answers?: AnswerValue[] }, user) => {
     const d = getDB();
     const lesson = d.lessons.find((l) => l.id === p.lesson_id);
     if (!lesson) throw new Error('Pelajaran tidak ditemukan');
@@ -414,9 +434,10 @@ export const actions: Record<string, Handler> = {
     let correct = 0;
     if (lesson.type === 'kuis') {
       const answers = p.answers || [];
-      if (answers.length < lesson.quiz.length || answers.some((a) => a < 0)) throw new Error('Jawab semua pertanyaan kuis terlebih dahulu');
-      correct = lesson.quiz.filter((q, i) => answers[i] === q.answer).length;
-      score = lesson.quiz.length ? Math.round((correct / lesson.quiz.length) * 100) : 0;
+      if (lesson.quiz.some((q, i) => !isAnswered(q, answers[i]))) throw new Error('Jawab semua pertanyaan kuis terlebih dahulu');
+      const r = scoreAnswers(lesson.quiz, answers);
+      correct = r.correct;
+      score = r.score;
     }
     const ex = d.lesson_progress.find((x) => x.lesson_id === lesson.id && x.student_id === p.student_id);
     const best = ex?.quiz_score != null && score != null ? Math.max(ex.quiz_score, score) : score ?? ex?.quiz_score ?? null;

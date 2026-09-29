@@ -193,11 +193,27 @@ export interface Submission {
   feedback: string;
 }
 
+export type QuestionType = 'pg' | 'pgk' | 'bs' | 'esai';
+
+/**
+ * Soal ujian/kuis.
+ * - pg   : pilihan ganda, kunci `answer` (indeks opsi)
+ * - pgk  : pilihan ganda kompleks, kunci `answers` (beberapa indeks opsi)
+ * - bs   : benar/salah, options ['Benar','Salah'], kunci `answer` 0/1
+ * - esai : jawaban teks, `key` = kunci/rubrik untuk korektor, dinilai guru
+ */
 export interface Question {
+  type?: QuestionType; // default 'pg' (data lama)
   q: string;
   options: string[];
   answer: number;
+  answers?: number[];
+  points?: number;
+  key?: string;
 }
+
+/** Jawaban siswa per soal: indeks opsi (pg/bs), daftar indeks (pgk), teks (esai), atau null. */
+export type AnswerValue = number | number[] | string | null;
 
 export interface Exam {
   id: number;
@@ -239,7 +255,7 @@ export interface ExamAttempt {
   window_id: number | null;
   started_at: string;
   deadline: string;
-  answers: number[];
+  answers: AnswerValue[];
   submitted_at: string | null;
 }
 
@@ -247,10 +263,12 @@ export interface ExamResult {
   id: number;
   exam_id: number;
   student_id: number;
-  answers: number[];
+  answers: AnswerValue[];
   score: number;
   submitted_at: string;
   kind: AttemptKind;
+  points?: (number | null)[]; // poin per soal (null = esai belum dikoreksi)
+  pending_essay?: boolean;
 }
 
 export interface Grade {

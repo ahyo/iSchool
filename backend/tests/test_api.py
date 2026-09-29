@@ -665,3 +665,47 @@ def test_cbt_schedule_window_enforced(client, auth):
     assert kinds == ["remedial", "susulan"]
     # siswa tidak boleh membuat jadwal
     assert client.post("/api/actions/exams.windowCreate", headers=hs, json={"exam_id": closed["id"], "kind": "susulan", "date": tomorrow, "start_time": "08:00", "end_time": "09:00", "student_ids": [me["id"]]}).status_code == 403
+
+
+# ------------------------------------------------------------------ tipe soal & koreksi esai
+MIXED = [
+    {"type": "pg", "q": "1+1", "options": ["1", "2", "3", "4"], "answer": 1, "points": 1},
+    {"type": "pgk", "q": "prima", "options": ["2", "9", "11", "15"], "answer": -1, "answers": [0, 2], "points": 2},
+    {"type": "bs", "q": "7x8=56", "options": ["Benar", "Salah"], "answer": 0, "points": 1},
+    {"type": "esai", "q": "jelaskan", "options": [], "answer": -1, "key": "rubrik", "points": 6},
+]
+
+
+def test_scoring_mixed_types():
+    from app.scoring import score_answers
+    full = score_answers(MIXED, [1, [2, 0], 0, "jawaban"], [None, None, None, 6])
+    assert full["score"] == 100 and full["correct"] == 3 and not full["pending_essay"]
+    partial_pgk = score_answers(MIXED, [1, [0], 0, "x"], [None, None, None, 3])  # pgk tidak lengkap -> 0
+    assert partial_pgk["points"] == [1, 0, 1, 3] and partial_pgk["score"] == 50
+    pending = score_answers(MIXED, [1, [0, 2], 1, "belum dikoreksi"])
+    assert pending["pending_essay"] and pending["points"][3] is None and pending["score"] == 30  # 3/10
+    empty_essay = score_answers(MIXED, [1, [0, 2], 0, ""])
+    assert not empty_essay["pending_essay"] and empty_essay["points"][3] == 0
+
+
+def test_essay_exam_graded_by_teacher(client, auth):
+    import datetime as dt
+    ha, hs = auth("admin"), auth("siswa")
+    me = client.get("/api/students", headers=hs).json()[0]
+    sched = client.get(f"/api/schedules?class_id={me['class_id']}", headers=ha).json()[0]
+    exam = client.post("/api/exams", headers=ha, json={"class_id": me["class_id"], "subject_id": sched["subject_id"], "teacher_id": sched["teacher_id"], "name": "Campuran",
+                                                       "type": "UH", "date": dt.date.today().isoformat(), "start_time": "00:00", "end_time": "23:59", "duration": 30, "is_online": True, "questions": MIXED}).json()
+    st = client.post("/api/actions/exams.start", headers=hs, json={"exam_id": exam["id"], "student_id": me["id"]}).json()
+    qs = st["questions"]
+    assert [q["type"] for q in qs] == ["pg", "pgk", "bs", "esai"]
+    assert all("answers" not in q and "key" not in q and q["answer"] == -1 for q in qs)  # kunci & rubrik tersembunyi
+    assert st["attempt"]["answers"] == [-1, [], -1, ""]
+    sub = client.post("/api/actions/exams.submit", headers=hs, json={"attempt_id": st["attempt"]["id"], "answers": [1, [0, 2], 0, "Proses fotosintesis ..."]}).json()
+    assert sub["pending_essay"] and sub["score"] == 40  # 4 dari 10 poin, esai menunggu
+    listed = client.get(f"/api/exams/{exam['id']}", headers=hs).json()
+    assert all("key" not in q for q in listed["questions"])
+    # siswa tidak bisa mengoreksi; guru pengampu/admin bisa
+    assert client.post("/api/actions/exams.gradeEssay", headers=hs, json={"result_id": sub["id"], "points": {"3": 6}}).status_code == 403
+    assert client.post("/api/actions/exams.gradeEssay", headers=ha, json={"result_id": sub["id"], "points": {"3": 99}}).status_code == 422
+    graded = client.post("/api/actions/exams.gradeEssay", headers=ha, json={"result_id": sub["id"], "points": {"3": 5}}).json()
+    assert not graded["pending_essay"] and graded["score"] == 90 and graded["points"] == [1, 2, 1, 5]

@@ -1,0 +1,13 @@
+{
+  "name": "ischool-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Tes end-to-end iSchool di browser (Chrome) memakai puppeteer-core",
+  "scripts": {
+    "smoke": "node smoke.mjs",
+    "soal": "node soal.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.12.0"
+  }
+}

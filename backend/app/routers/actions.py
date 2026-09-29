@@ -21,6 +21,7 @@ from ..models import (
 from ..cbt import GRACE, at, availability, effective_score
 from ..examcard import card_payload, card_token, eligibility, parse_payload, period_for_exam
 from ..importer import run_import
+from ..scoring import empty_answer, is_answered, public_question, q_points, q_type, score_answers
 from ..security import hash_password, verify_password
 from ..serialize import to_dict
 
@@ -321,14 +322,13 @@ def submissions_submit(db: Session, p: dict, user: Principal):
 
 def _finalize_attempt(db: Session, attempt: ExamAttempt, answers: list) -> dict:
     exam = db.get(Exam, attempt.exam_id)
-    questions = exam.questions or []
-    correct = sum(1 for i, q in enumerate(questions) if i < len(answers) and answers[i] == q.get("answer"))
-    score = round(correct / len(questions) * 100) if questions else 0
+    r = score_answers(exam.questions or [], answers)
     attempt.answers, attempt.submitted_at = answers, now()
-    row = ExamResult(exam_id=exam.id, student_id=attempt.student_id, answers=answers, score=score, submitted_at=now(), kind=attempt.kind)
+    row = ExamResult(exam_id=exam.id, student_id=attempt.student_id, answers=answers, score=r["score"], submitted_at=now(), kind=attempt.kind,
+                     points=r["points"], pending_essay=r["pending_essay"])
     db.add(row)
     db.flush()
-    return {**to_dict(row), "correct": correct, "total": len(questions)}
+    return {**to_dict(row), "correct": r["correct"], "total": r["total"]}
 
 
 def _finalize_expired(db: Session, exam_id: int, student_id: int) -> None:
@@ -370,7 +370,7 @@ def exams_start(db: Session, p: dict, user: Principal):
             raise HTTPException(403, "Kartu ujian belum terbit: selesaikan persyaratan administrasi terlebih dahulu")
         deadline = min(now() + dt.timedelta(minutes=exam.duration), at(s["date"], s["end_time"]))
         attempt = ExamAttempt(exam_id=exam.id, student_id=sid, kind=s["kind"], window_id=s["window_id"], started_at=now(), deadline=deadline,
-                              answers=[-1] * len(exam.questions or []), submitted_at=None)
+                              answers=[empty_answer(q) for q in exam.questions or []], submitted_at=None)
         db.add(attempt)
     elif av["state"] == "upcoming":
         s = av["session"]
@@ -380,7 +380,7 @@ def exams_start(db: Session, p: dict, user: Principal):
     else:
         raise HTTPException(400, av["reason"])
     db.commit()
-    questions = [{"q": q.get("q"), "options": q.get("options"), "answer": -1} for q in exam.questions or []]
+    questions = [public_question(q) for q in exam.questions or []]
     return {"attempt": to_dict(attempt), "questions": questions, "server_now": now().isoformat()}
 
 
@@ -409,6 +409,27 @@ def _exam_owner(db: Session, exam_id: int, user: Principal) -> Exam:
     if not (user.role == "admin" or (user.role == "guru" and exam.teacher_id == user.user.employee_id)):
         raise HTTPException(403, "Hanya guru pengampu yang dapat menjadwalkan")
     return exam
+
+
+def exams_grade_essay(db: Session, p: dict, user: Principal):
+    res = db.get(ExamResult, int(p.get("result_id") or 0))
+    if not res:
+        raise HTTPException(404, "Hasil ujian tidak ditemukan")
+    exam = _exam_owner(db, res.exam_id, user)
+    questions = exam.questions or []
+    essay = list(res.points or [None] * len(questions))
+    essay += [None] * (len(questions) - len(essay))
+    for k, v in (p.get("points") or {}).items():
+        i = int(k)
+        if i >= len(questions) or q_type(questions[i]) != "esai":
+            continue
+        if v is not None and (not isinstance(v, (int, float)) or v < 0 or v > q_points(questions[i])):
+            raise HTTPException(422, f"Nilai soal {i + 1} harus 0–{q_points(questions[i])}")
+        essay[i] = v
+    r = score_answers(questions, res.answers or [], [essay[i] if q_type(q) == "esai" else None for i, q in enumerate(questions)])
+    res.score, res.points, res.pending_essay = r["score"], r["points"], r["pending_essay"]
+    db.commit()
+    return to_dict(res)
 
 
 def exams_window_create(db: Session, p: dict, user: Principal):
@@ -566,10 +587,10 @@ def elearning_complete(db: Session, p: dict, user: Principal):
     score, correct, quiz = None, 0, lesson.quiz or []
     if lesson.type == "kuis":
         answers = list(p.get("answers") or [])
-        if len(answers) < len(quiz) or any(a is None or a < 0 for a in answers[: len(quiz)]):
+        if any(not is_answered(q, answers[i] if i < len(answers) else None) for i, q in enumerate(quiz)):
             raise HTTPException(400, "Jawab semua pertanyaan kuis terlebih dahulu")
-        correct = sum(1 for i, q in enumerate(quiz) if answers[i] == q.get("answer"))
-        score = round(correct / len(quiz) * 100) if quiz else 0
+        r = score_answers(quiz, answers)
+        correct, score = r["correct"], r["score"]
     row = db.scalars(select(LessonProgress).where(LessonProgress.lesson_id == lesson.id, LessonProgress.student_id == sid)).first()
     if row:
         row.completed_at = now()
@@ -1098,6 +1119,7 @@ HANDLERS = {
     "exams.start": exams_start,
     "exams.saveAnswers": exams_save_answers,
     "exams.submit": exams_submit,
+    "exams.gradeEssay": exams_grade_essay,
     "exams.windowCreate": exams_window_create,
     "exams.windowDelete": exams_window_delete,
     "grades.save": grades_save,

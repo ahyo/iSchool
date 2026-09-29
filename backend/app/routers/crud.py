@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import Principal, get_principal
 from ..models import RESOURCES, EmployeeAttendance, Guardian, Student, User
+from ..scoring import public_question
 from ..serialize import apply_payload, coerce_query, to_dict
 
 router = APIRouter(prefix="/api", tags=["data"])
@@ -90,9 +91,9 @@ def serialize(obj, p: Principal) -> dict[str, Any]:
     d = to_dict(obj)
     # Kunci jawaban ujian tidak dikirim ke siswa / orang tua
     if p.is_family and obj.__tablename__ == "exams":
-        d["questions"] = [{"q": q.get("q"), "options": q.get("options"), "answer": -1} for q in d.get("questions") or []]
+        d["questions"] = [public_question(q) for q in d.get("questions") or []]
     if p.is_family and obj.__tablename__ == "lessons":
-        d["quiz"] = [{"q": q.get("q"), "options": q.get("options"), "answer": -1} for q in d.get("quiz") or []]
+        d["quiz"] = [public_question(q) for q in d.get("quiz") or []]
     return d
 
 

@@ -32,7 +32,7 @@ Di halaman login tersedia tombol masuk cepat. Semua akun memakai password `demo1
 | Keuangan | Master jenis biaya (SPP bulanan, pendaftaran, uang pangkal, ujian, kegiatan, lainnya), generate tagihan massal per unit/kelas (idempoten), tagihan perorangan, potongan/beasiswa, cicilan, pembayaran tunai/transfer/VA/QRIS, kwitansi + terbilang, pembayaran online oleh siswa/ortu (dengan no. referensi & bukti) yang **menunggu verifikasi bagian keuangan** sebelum dihitung lunas (verifikasi/tolak dengan alasan; kwitansi terbit saat diverifikasi), laporan penerimaan & piutang, pencatatan pengeluaran & laporan arus kas (penerimaan vs pengeluaran, saldo), ekspor CSV |
 | Presensi | Presensi siswa harian per kelas (H/S/I/A) + rekap bulanan; presensi guru & pegawai check-in/out dengan deteksi terlambat + rekap |
 | Akademik | Tahun ajaran & semester, kelas/rombel & wali kelas, mata pelajaran & KKTP, jadwal pelajaran (per kelas/per guru, cek bentrok) |
-| Pembelajaran | Materi pelajaran, tugas (pengumpulan, penilaian, umpan balik), ujian & CBT pilihan ganda dengan penilaian otomatis. CBT dibuka–ditutup sesuai jadwal (jam buka & tutup), sesi pengerjaan tersimpan di server sehingga keluar/masuk halaman melanjutkan **sisa waktu** dan jawaban (tersimpan otomatis), dikumpulkan otomatis saat waktu habis; **ujian susulan** (bagi yang belum ujian) dan **remedial** (di bawah KKTP, nilai maks. KKTP) dengan jadwal khusus per siswa |
+| Pembelajaran | Materi pelajaran, tugas (pengumpulan, penilaian, umpan balik), ujian & CBT dengan empat tipe soal — **pilihan ganda**, **PG kompleks** (lebih dari satu jawaban benar, harus tepat semua), **benar/salah** (dinilai otomatis) dan **esai** (dikoreksi guru dengan rubrik; siswa melihat nilai sementara hingga esai dikoreksi) — serta bobot poin per soal (nilai = poin diperoleh ÷ total bobot × 100). Soal dapat **diunggah dari Excel/CSV** (template tersedia: kolom Tipe, Pertanyaan, Opsi A–E, Kunci, Bobot) dengan pratinjau dan pengecekan per baris, ditambahkan atau mengganti soal yang ada. CBT dibuka–ditutup sesuai jadwal (jam buka & tutup), sesi pengerjaan tersimpan di server sehingga keluar/masuk halaman melanjutkan **sisa waktu** dan jawaban (tersimpan otomatis), dikumpulkan otomatis saat waktu habis; **ujian susulan** (bagi yang belum ujian) dan **remedial** (di bawah KKTP, nilai maks. KKTP) dengan jadwal khusus per siswa |
 | E-Learning | Kelas online per mapel-kelas: modul & pelajaran bertahap (bacaan, video YouTube/Vimeo/Drive/MP4, dokumen, kuis dengan nilai otomatis & bisa diulang), draf/publikasi, pelacakan progres per siswa (+ ekspor CSV), kelas virtual (Jitsi/Meet/Zoom/Teams) dengan pencatatan kehadiran & rekaman, forum diskusi (topik, balasan, sematkan, moderasi), dipantau orang tua |
 | Nilai & rapor | Input nilai (tugas, harian, PTS, PAS → nilai akhir berbobot), leger kelas + ranking, rapor siap cetak untuk semester mana pun |
 | Kartu ujian | Periode ujian (PTS/PAS/US/UKK) dengan syarat SPP lunas s.d. bulan tertentu & biaya ujian lunas; kartu peserta ber-QR terbit otomatis setelah syarat terpenuhi (atau dispensasi dari keuangan), bisa dicetak per siswa/per kelas; CBT ujian terkait terkunci bila kartu belum terbit; guru pengawas memverifikasi dengan kamera (pindai QR) atau NIS, kelayakan dicek ulang langsung, QR bertanda tangan HMAC sehingga tidak bisa dipalsukan, daftar hadir ujian per ruang |
@@ -58,7 +58,9 @@ backend/    FastAPI + PostgreSQL
   app/models.py             skema database (nama kolom = tipe frontend)
   app/routers/crud.py       REST generik + scoping data siswa/ortu
   app/routers/actions.py    aksi bisnis (PPDB, pembayaran, presensi, CBT, nilai, kenaikan)
+  app/scoring.py            penilaian soal (padanan frontend/src/lib/scoring.ts)
   tests/                    pytest (auth, hak akses, alur bisnis)
+e2e/        tes browser (puppeteer-core) untuk mode demo & live
 ```
 
 ## Menjalankan
@@ -100,6 +102,19 @@ cd backend
 pip install -r requirements-dev.txt
 createdb ischool_test
 TEST_DATABASE_URL=postgresql+psycopg://localhost/ischool_test pytest -q
+```
+
+### Tes E2E (browser)
+
+Membutuhkan Google Chrome. Jalankan build statis frontend lalu:
+
+```bash
+(cd frontend && npx next build && python3 -m http.server 4317 -d out) &
+cd e2e && npm install
+node smoke.mjs        # login tiap peran & buka semua menu
+node soal.mjs         # unggah soal Excel, CBT 4 tipe soal, koreksi esai
+# Mode live: build frontend dengan NEXT_PUBLIC_API_URL, lalu
+BASE=http://localhost:4318 API=http://localhost:8000 node soal.mjs
 ```
 
 ## Kontrak API

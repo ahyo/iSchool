@@ -549,7 +549,13 @@ type SeedPayment = Omit<Payment, 'status' | 'reference' | 'proof_url' | 'verifie
   // Kuis CBT yang bisa langsung dicoba oleh akun demo siswa hari ini
   {
     const mtk = subjects.find((s) => s.unit_id === 3 && s.code === 'MTK')!;
-    exams.push({ id: ++exid, class_id: demoClass.id, subject_id: mtk.id, teacher_id: subjectTeacher[mtk.id], name: 'Kuis Harian Matematika (CBT)', type: 'UH', date: TODAY, start_time: '00:00', end_time: '23:59', duration: 20, is_online: true, questions: [...questionsFor('MTK'), ...questionsFor('UMUM').slice(0, 3)] });
+    exams.push({ id: ++exid, class_id: demoClass.id, subject_id: mtk.id, teacher_id: subjectTeacher[mtk.id], name: 'Kuis Harian Matematika (CBT)', type: 'UH', date: TODAY, start_time: '00:00', end_time: '23:59', duration: 30, is_online: true, questions: [
+      ...questionsFor('MTK').map((q) => ({ ...q, type: 'pg' as const, points: 1 })),
+      { type: 'pgk', q: 'Manakah yang merupakan bilangan prima? (pilih semua yang benar)', options: ['2', '9', '11', '15', '17'], answer: -1, answers: [0, 2, 4], points: 2 },
+      { type: 'bs', q: 'Hasil dari 7 × 8 adalah 56.', options: ['Benar', 'Salah'], answer: 0, points: 1 },
+      { type: 'bs', q: 'Semua bilangan genap habis dibagi 4.', options: ['Benar', 'Salah'], answer: 1, points: 1 },
+      { type: 'esai', q: 'Jelaskan langkah-langkah menyelesaikan persamaan 2x + 6 = 20 hingga diperoleh nilai x!', options: [], answer: -1, key: 'Kurangi kedua ruas dengan 6 → 2x = 14; bagi kedua ruas dengan 2 → x = 7. Skor penuh bila langkah & hasil benar.', points: 10 },
+    ] });
   }
 
   // ---------- E-Learning: pelajaran, progres, kelas virtual, diskusi ----------

@@ -246,6 +246,8 @@ class ExamResult(Base):
     score: Mapped[float] = mapped_column(Float)
     submitted_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.now)
     kind: Mapped[str] = mapped_column(String(10), default="utama")  # utama | susulan | remedial
+    points: Mapped[list] = mapped_column(JSON, default=list)  # poin per soal (null = esai belum dikoreksi)
+    pending_essay: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Grade(Base):

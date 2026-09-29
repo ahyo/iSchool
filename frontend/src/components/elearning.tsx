@@ -7,10 +7,12 @@ import {
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import type { LearningScope } from '@/lib/useLearningScope';
-import type { Discussion, Lesson, LessonProgress, LessonType, Student, VirtualClass } from '@/lib/types';
+import type { AnswerValue, Discussion, Lesson, LessonProgress, LessonType, Student, VirtualClass } from '@/lib/types';
 import { Avatar, Badge, Button, Card, Empty, Field, Input, Modal, ProgressBar, Select, Tabs, Textarea, run } from './ui';
 import { FormModal } from './FormModal';
 import { QuestionEditor, emptyQuestion, validateQuestions } from './QuestionEditor';
+import { QuestionInput } from './QuestionInput';
+import { emptyAnswer, isAnswered } from '@/lib/scoring';
 import { cn, downloadCSV, fmtDate, fmtDateTime, nowISO, today } from '@/lib/utils';
 
 export type Course = { class_id: number; subject_id: number };
@@ -268,10 +270,10 @@ function LessonsPane({ scope, data, course, lessons, canManage }: { scope: Learn
 }
 
 function QuizBlock({ lesson, scope, progress }: { lesson: Lesson; scope: LearningScope; progress?: LessonProgress }) {
-  const [answers, setAnswers] = useState<number[]>(() => lesson.quiz.map(() => -1));
+  const [answers, setAnswers] = useState<AnswerValue[]>(() => lesson.quiz.map(emptyAnswer));
   const [result, setResult] = useState<{ score: number; correct: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setAnswers(lesson.quiz.map(() => -1)); setResult(null); }, [lesson.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setAnswers(lesson.quiz.map(emptyAnswer)); setResult(null); }, [lesson.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const isStudent = scope.role === 'siswa';
   const showKey = !scope.student; // guru/staf melihat kunci jawaban
 
@@ -287,24 +289,17 @@ function QuizBlock({ lesson, scope, progress }: { lesson: Lesson; scope: Learnin
       {progress?.quiz_score != null && !result && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">Nilai terbaik: <b>{progress.quiz_score}</b>{isStudent && ' — kamu dapat mengulang kuis untuk memperbaiki nilai.'}</p>}
       {lesson.quiz.map((q, i) => (
         <div key={i} className="rounded-lg border border-slate-200 p-4">
-          <p className="font-medium">{i + 1}. {q.q}</p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            {q.options.map((o, k) => (
-              <label key={k} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm', answers[i] === k ? 'border-brand-500 bg-brand-50' : 'border-slate-200', showKey && q.answer === k && 'border-emerald-400 bg-emerald-50')}>
-                <input type="radio" name={`quiz-${lesson.id}-${i}`} disabled={!isStudent} checked={answers[i] === k} onChange={() => setAnswers(answers.map((a, j) => (j === i ? k : a)))} />
-                <span className="font-semibold">{String.fromCharCode(65 + k)}.</span> {o}
-              </label>
-            ))}
-          </div>
+          <p className="mb-2 font-medium">{i + 1}. {q.q}</p>
+          <QuestionInput q={q} value={answers[i]} compact disabled={!isStudent} showKey={showKey} onChange={(v) => setAnswers(answers.map((a, j) => (j === i ? v : a)))} />
         </div>
       ))}
       {result && (
         <div className={cn('rounded-xl p-4 text-center', result.score >= 70 ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800')}>
           <p className="text-3xl font-extrabold">{result.score}</p>
-          <p className="text-sm">{result.correct} dari {result.total} jawaban benar · {result.score >= 70 ? 'Tuntas!' : 'Belum tuntas, pelajari lagi lalu ulangi kuis.'}</p>
+          <p className="text-sm">{result.correct} dari {result.total} soal benar · {result.score >= 70 ? 'Tuntas!' : 'Belum tuntas, pelajari lagi lalu ulangi kuis.'}</p>
         </div>
       )}
-      {isStudent && <Button loading={busy} disabled={answers.some((a) => a < 0)} onClick={submit}><Send className="h-4 w-4" /> {result || progress ? 'Kirim Ulang Jawaban' : 'Kirim Jawaban'}</Button>}
+      {isStudent && <Button loading={busy} disabled={lesson.quiz.some((q, i) => !isAnswered(q, answers[i]))} onClick={submit}><Send className="h-4 w-4" /> {result || progress ? 'Kirim Ulang Jawaban' : 'Kirim Jawaban'}</Button>}
     </div>
   );
 }
@@ -344,7 +339,7 @@ function LessonEditor({ initial, scope, modules, onClose }: { initial: Partial<L
         <label className="flex items-center gap-2 text-sm sm:col-span-4"><input type="checkbox" checked={!!l.is_published} onChange={(e) => set('is_published', e.target.checked)} /> Publikasikan ke siswa</label>
       </div>
       {l.type === 'video' && l.video_url && <div className="mt-4"><p className="mb-2 text-sm font-medium">Pratinjau</p><VideoPlayer url={l.video_url} /></div>}
-      {l.type === 'kuis' && <div className="mt-6"><QuestionEditor questions={l.quiz || []} onChange={(q) => set('quiz', q)} /></div>}
+      {l.type === 'kuis' && <div className="mt-6"><QuestionEditor questions={l.quiz || []} allowEssay={false} onChange={(q) => set('quiz', q)} /></div>}
     </Modal>
   );
 }

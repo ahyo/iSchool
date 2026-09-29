@@ -6,7 +6,9 @@ import { api, useData } from '@/lib/api';
 import { useLearningScope, type LearningScope } from '@/lib/useLearningScope';
 import { Avatar, Badge, Button, Card, Empty, Field, Input, Loading, Modal, PageHeader, Select, StatCard, Tabs, run, toast } from '@/components/ui';
 import { cn, avg, fmtDate, fmtDateTime, round, today } from '@/lib/utils';
-import type { Exam, ExamAttempt, ExamResult, ExamWindow, Question } from '@/lib/types';
+import type { AnswerValue, Exam, ExamAttempt, ExamResult, ExamWindow, Question } from '@/lib/types';
+import { QuestionInput } from '@/components/QuestionInput';
+import { emptyAnswer, isAnswered, qPoints, qType } from '@/lib/scoring';
 import { QuestionEditor, emptyQuestion, validateQuestions } from '@/components/QuestionEditor';
 import { examEligibility, periodForExam } from '@/lib/examcard';
 import { addMinutes, availability, effectiveScore, examEnd, KIND_LABEL, type Availability } from '@/lib/cbt';
@@ -99,8 +101,8 @@ function StudentExams({ scope }: { scope: LearningScope }) {
                   <td className="px-4 py-2.5 font-medium">{e.name}</td>
                   <td>{scope.subjects.get(e.subject_id)?.name}</td>
                   <td>{fmtDate(e.date)}</td>
-                  <td className="text-xs text-slate-500">{rs.map((r) => `${KIND_LABEL[r.kind || 'utama']}: ${r.score}`).join(' · ') || (a.state === 'closed' ? a.reason : '-')}</td>
-                  <td className="pr-4 text-right">{eff !== null ? <span className={cn('text-lg font-bold', eff >= kkm(e) ? 'text-emerald-600' : 'text-red-600')}>{eff}</span> : <Badge tone="red">Tidak ikut</Badge>}</td>
+                  <td className="text-xs text-slate-500">{rs.map((r) => `${KIND_LABEL[r.kind || 'utama']}: ${r.score}${r.pending_essay ? ' (menunggu koreksi esai)' : ''}`).join(' · ') || (a.state === 'closed' ? a.reason : '-')}</td>
+                  <td className="pr-4 text-right">{rs.some((r) => r.pending_essay) ? <Badge tone="amber">Menunggu koreksi</Badge> : eff !== null ? <span className={cn('text-lg font-bold', eff >= kkm(e) ? 'text-emerald-600' : 'text-red-600')}>{eff}</span> : <Badge tone="red">Tidak ikut</Badge>}</td>
                 </tr>
               );
             })}
@@ -116,10 +118,10 @@ function StudentExams({ scope }: { scope: LearningScope }) {
 function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onClose: () => void }) {
   const [attempt, setAttempt] = useState<ExamAttempt | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [answers, setAnswers] = useState<number[]>([]);
+  const [answers, setAnswers] = useState<AnswerValue[]>([]);
   const [idx, setIdx] = useState(0);
   const [left, setLeft] = useState(0);
-  const [result, setResult] = useState<{ score: number; correct: number; total: number } | null>(null);
+  const [result, setResult] = useState<{ score: number; correct: number; total: number; pending_essay?: boolean } | null>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [busy, setBusy] = useState(false);
@@ -133,7 +135,7 @@ function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onCl
         offset.current = new Date(r.server_now).getTime() - Date.now();
         setAttempt(r.attempt);
         setQuestions(r.questions);
-        setAnswers(r.attempt.answers?.length ? r.attempt.answers : r.questions.map(() => -1));
+        setAnswers(r.attempt.answers?.length ? r.attempt.answers : r.questions.map(emptyAnswer));
       })
       .catch((e) => setError(e.message));
   }, [exam.id, studentId]);
@@ -143,7 +145,7 @@ function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onCl
     setBusy(true);
     try {
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      const r = await api.action<{ score: number; correct: number; total: number }>('exams.submit', { attempt_id: attempt.id, answers });
+      const r = await api.action<{ score: number; correct: number; total: number; pending_essay?: boolean }>('exams.submit', { attempt_id: attempt.id, answers });
       setResult(r);
       if (auto) toast.success('Waktu habis — jawaban dikumpulkan otomatis');
     } catch (e) {
@@ -164,18 +166,18 @@ function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onCl
     if (attempt && !result && left === 0 && questions.length) submit(true);
   }, [left]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const choose = (i: number) => {
-    const next = answers.map((x, j) => (j === idx ? i : x));
+  const choose = (v: AnswerValue) => {
+    const next = answers.map((x, j) => (j === idx ? v : x));
     setAnswers(next);
     setSaved('saving');
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       api.action('exams.saveAnswers', { attempt_id: attempt!.id, answers: next }).then(() => setSaved('saved')).catch(() => setSaved('idle'));
-    }, 500);
+    }, typeof v === 'string' ? 900 : 500);
   };
 
   const q = questions[idx];
-  const answered = answers.filter((a) => a >= 0).length;
+  const answered = questions.filter((qq, i) => isAnswered(qq, answers[i])).length;
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-slate-100">
       <div className="flex items-center gap-4 bg-slate-900 px-6 py-3 text-white">
@@ -197,7 +199,9 @@ function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onCl
             <CheckCircle2 className="mx-auto h-14 w-14 text-emerald-500" />
             <p className="mt-3 text-lg font-semibold">Jawaban terkirim</p>
             <p className="mt-2 text-5xl font-extrabold text-brand-700">{result.score}</p>
-            <p className="mt-1 text-sm text-slate-500">{result.correct} dari {result.total} jawaban benar</p>
+            {result.pending_essay
+              ? <p className="mt-1 text-sm text-amber-700">Nilai sementara (soal objektif). Nilai akhir keluar setelah guru mengoreksi jawaban esai.</p>
+              : <p className="mt-1 text-sm text-slate-500">{result.correct} soal objektif benar dari {result.total} soal</p>}
             {attempt?.kind === 'remedial' && <p className="mt-2 text-xs text-slate-500">Nilai remedial dihitung maksimal setara KKTP.</p>}
             <Button className="mt-6 w-full" onClick={onClose}>Tutup</Button>
           </div>
@@ -206,15 +210,8 @@ function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onCl
         <div className="mx-auto grid w-full max-w-6xl flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[1fr_260px]">
           <div className="rounded-xl bg-white p-6 shadow-sm">
             <p className="text-sm text-slate-500">Soal {idx + 1} dari {questions.length}</p>
-            <p className="mt-3 text-lg font-medium">{q.q}</p>
-            <div className="mt-5 space-y-2">
-              {q.options.map((o, i) => (
-                <button key={i} onClick={() => choose(i)} className={cn('flex w-full items-center gap-3 rounded-lg border-2 p-3 text-left transition', answers[idx] === i ? 'border-brand-500 bg-brand-50' : 'border-slate-200 hover:border-slate-300')}>
-                  <span className={cn('flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold', answers[idx] === i ? 'bg-brand-600 text-white' : 'bg-slate-100')}>{String.fromCharCode(65 + i)}</span>
-                  {o}
-                </button>
-              ))}
-            </div>
+            <p className="mt-3 whitespace-pre-line text-lg font-medium">{q.q}</p>
+            <div className="mt-5"><QuestionInput q={q} value={answers[idx]} onChange={choose} /></div>
             <div className="mt-6 flex justify-between">
               <Button variant="secondary" disabled={idx === 0} onClick={() => setIdx(idx - 1)}>Sebelumnya</Button>
               {idx < questions.length - 1 ? <Button onClick={() => setIdx(idx + 1)}>Berikutnya</Button> : <Button variant="success" loading={busy} onClick={() => confirm(`Kirim jawaban? ${questions.length - answered} soal belum dijawab.`) && submit()}>Selesai & Kirim</Button>}
@@ -224,7 +221,7 @@ function CBT({ exam, studentId, onClose }: { exam: Exam; studentId: number; onCl
             <p className="mb-3 text-sm font-semibold">Navigasi Soal <span className="font-normal text-slate-500">({answered}/{questions.length})</span></p>
             <div className="grid grid-cols-5 gap-2">
               {questions.map((_, i) => (
-                <button key={i} onClick={() => setIdx(i)} className={cn('h-10 rounded-lg text-sm font-semibold', i === idx && 'ring-2 ring-brand-500', answers[i] >= 0 ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600')}>{i + 1}</button>
+                <button key={i} onClick={() => setIdx(i)} className={cn('h-10 rounded-lg text-sm font-semibold', i === idx && 'ring-2 ring-brand-500', isAnswered(questions[i], answers[i]) ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-600')}>{i + 1}</button>
               ))}
             </div>
             <Button variant="success" className="mt-4 w-full" loading={busy} onClick={() => confirm('Kirim jawaban sekarang?') && submit()}>Kirim Jawaban</Button>
@@ -243,6 +240,7 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
   const [tab, setTab] = useState<'mendatang' | 'selesai'>('mendatang');
   const [builder, setBuilder] = useState<Partial<Exam> | null>(null);
   const [resultsOf, setResultsOf] = useState<Exam | null>(null);
+  const [grading, setGrading] = useState<{ exam: Exam; result: ExamResult; points: Record<number, string> } | null>(null);
   const [win, setWin] = useState<{ exam: Exam; kind: 'susulan' | 'remedial'; date: string; start_time: string; end_time: string; student_ids: number[]; notes: string } | null>(null);
   const rows = useMemo(() => (data?.exams || []).filter((e) => scope.pairAllowed(e.class_id, e.subject_id) && (!classId || e.class_id === Number(classId))), [data, scope, classId]);
   if (!data) return <Loading />;
@@ -277,7 +275,7 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
 
   return (
     <>
-      <PageHeader title="Ujian & CBT" subtitle="Jadwal buka–tutup ujian, bank soal, penilaian otomatis, ujian susulan & remedial" actions={canManage && <Button onClick={() => setBuilder({ class_id: Number(classId) || pairs[0]?.class_id, subject_id: pairs[0]?.subject_id, type: 'UH', date: today(), start_time: '08:00', end_time: '09:30', duration: 45, is_online: true, questions: [emptyQuestion()] })}><Plus className="h-4 w-4" /> Buat Ujian</Button>} />
+      <PageHeader title="Ujian & CBT" subtitle="Jadwal buka–tutup ujian, bank soal, penilaian otomatis, ujian susulan & remedial" actions={canManage && <Button onClick={() => setBuilder({ class_id: Number(classId) || pairs[0]?.class_id, subject_id: pairs[0]?.subject_id, type: 'UH', date: today(), start_time: '08:00', end_time: '09:30', duration: 45, is_online: true, questions: [emptyQuestion('pg')] })}><Plus className="h-4 w-4" /> Buat Ujian</Button>} />
       <div className="mb-4"><Select className="w-52" value={classId} onChange={(e) => setClassId(e.target.value)} placeholder="Semua kelas" options={classList.map((c) => ({ value: c.id, label: c.name }))} /></div>
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'mendatang', label: 'Mendatang / Berlangsung' }, { value: 'selesai', label: 'Selesai' }]} />
       <Card bodyClass="p-0">
@@ -297,6 +295,7 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
                   </div>
                   <div className="text-center text-sm"><p className="font-bold">{main.size}/{total}</p><p className="text-xs text-slate-500">peserta</p></div>
                   {inProgress > 0 && <Badge tone="green">{inProgress} sedang mengerjakan</Badge>}
+                  {r.some((x) => x.pending_essay) && <Badge tone="amber">{r.filter((x) => x.pending_essay).length} esai perlu dikoreksi</Badge>}
                   <div className="text-center text-sm"><p className="font-bold">{round(avg(members(e).map((s) => eff(e, s.id))), 1) ?? '-'}</p><p className="text-xs text-slate-500">rata-rata</p></div>
                   <div className="flex flex-wrap gap-1">
                     <Button size="sm" variant="secondary" onClick={() => setResultsOf(e)}><BarChart3 className="h-4 w-4" /> Hasil</Button>
@@ -366,7 +365,7 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
                 <StatCard label={`Tuntas (≥${kkm})`} value={`${effs.filter((x) => x >= kkm).length}/${studs.length}`} />
               </div>
               <table className="w-full text-sm">
-                <thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2">Siswa</th><th className="text-center">Utama/Susulan</th><th className="text-center">Remedial</th><th className="text-right">Nilai Akhir</th></tr></thead>
+                <thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2">Siswa</th><th className="text-center">Utama/Susulan</th><th className="text-center">Remedial</th><th className="text-center">Esai</th><th className="text-right">Nilai Akhir</th></tr></thead>
                 <tbody>
                   {studs.map((s) => {
                     const m = byKind(s.id, 'main');
@@ -376,8 +375,13 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
                     return (
                       <tr key={s.id} className="border-b border-slate-100">
                         <td className="py-2"><span className="flex items-center gap-2"><Avatar name={s.name} className="h-7 w-7 text-[10px]" />{s.name}</span></td>
-                        <td className="text-center">{m ? <>{m.score}{m.kind === 'susulan' && <Badge tone="blue" className="ml-1">susulan</Badge>}</> : going ? <Badge tone="green">mengerjakan</Badge> : <Badge>belum</Badge>}</td>
+                        <td className="text-center">{m ? <>{m.score}{m.kind === 'susulan' && <Badge tone="blue" className="ml-1">susulan</Badge>}{m.pending_essay && <Badge tone="amber" className="ml-1">sementara</Badge>}</> : going ? <Badge tone="green">mengerjakan</Badge> : <Badge>belum</Badge>}</td>
                         <td className="text-center">{rm ? rm.score : '-'}</td>
+                        <td className="text-center">{[m, rm].filter((x): x is ExamResult => !!x && resultsOf.questions.some((qq) => qType(qq) === 'esai')).map((x) => (
+                          <Button key={x.id} size="sm" variant={x.pending_essay ? 'primary' : 'ghost'} onClick={() => setGrading({ exam: resultsOf, result: x, points: Object.fromEntries(resultsOf.questions.map((qq, qi) => [qi, x.points?.[qi] != null && qType(qq) === 'esai' ? String(x.points[qi]) : ''])) })}>
+                            {x.pending_essay ? 'Koreksi' : 'Ubah'}{x.kind === 'remedial' ? ' (R)' : ''}
+                          </Button>
+                        ))}</td>
                         <td className="text-right">{e2 !== null ? <span className={cn('font-bold', e2 >= kkm ? 'text-emerald-600' : 'text-red-600')}>{e2}</span> : '-'}</td>
                       </tr>
                     );
@@ -388,6 +392,32 @@ function TeacherExams({ scope }: { scope: LearningScope }) {
             </>
           );
         })()}
+      </Modal>
+
+      <Modal open={!!grading} onClose={() => setGrading(null)} title={`Koreksi Esai · ${scope.students.find((x) => x.id === grading?.result.student_id)?.name || ''}`} size="lg"
+        footer={<Button onClick={() => run(async () => {
+          const pts: Record<number, number | null> = {};
+          Object.entries(grading!.points).forEach(([k, v]) => { if (qType(grading!.exam.questions[Number(k)]) === 'esai') pts[Number(k)] = v === '' ? null : Number(v); });
+          await api.action('exams.gradeEssay', { result_id: grading!.result.id, points: pts });
+          setGrading(null);
+        }, 'Nilai esai disimpan — nilai akhir diperbarui')}>Simpan Nilai</Button>}>
+        {grading && (
+          <div className="space-y-5">
+            {grading.exam.questions.map((qq, qi) => qType(qq) !== 'esai' ? null : (
+              <div key={qi} className="rounded-lg border border-slate-200 p-4 text-sm">
+                <p className="font-medium">{qi + 1}. {qq.q}</p>
+                <div className="mt-2 whitespace-pre-line rounded-lg bg-slate-50 p-3">{typeof grading.result.answers[qi] === 'string' && (grading.result.answers[qi] as string).trim() ? (grading.result.answers[qi] as string) : <span className="text-slate-400">(tidak dijawab — otomatis 0)</span>}</div>
+                {qq.key && <p className="mt-2 text-xs text-emerald-800"><b>Kunci/rubrik:</b> {qq.key}</p>}
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-slate-500">Nilai</span>
+                  <Input type="number" min={0} max={qPoints(qq)} className="w-24" value={grading.points[qi] ?? ''} disabled={!(typeof grading.result.answers[qi] === 'string' && (grading.result.answers[qi] as string).trim())} onChange={(x) => setGrading({ ...grading, points: { ...grading.points, [qi]: x.target.value } })} />
+                  <span className="text-slate-500">/ {qPoints(qq)} poin</span>
+                </div>
+              </div>
+            ))}
+            <p className="text-xs text-slate-500">Nilai objektif sudah dihitung otomatis. Nilai akhir = total poin diperoleh ÷ total bobot × 100.</p>
+          </div>
+        )}
       </Modal>
     </>
   );
