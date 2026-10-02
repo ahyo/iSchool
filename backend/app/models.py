@@ -28,6 +28,9 @@ class Setting(Base):
     library_loan_days: Mapped[int] = mapped_column(Integer, default=7)
     library_max_loans: Mapped[int] = mapped_column(Integer, default=3)
     library_fine_per_day: Mapped[int] = mapped_column(Integer, default=500)
+    bank_name: Mapped[str] = mapped_column(String(120), default="")
+    bank_account: Mapped[str] = mapped_column(String(60), default="")
+    bank_holder: Mapped[str] = mapped_column(String(150), default="")
 
 
 class Unit(Base):

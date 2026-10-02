@@ -78,7 +78,7 @@ def public_portal(db: Session, p: dict, user: Principal | None):
             "students": db.scalar(select(func.count(Student.id)).where(Student.status == "aktif")),
             "teachers": db.scalar(select(func.count(Employee.id)).where(Employee.type == "guru", Employee.is_active)),
             "classes": db.scalar(select(func.count(SchoolClass.id))),
-            "alumni": (db.scalar(select(func.count(Student.id)).where(Student.status == "lulus")) or 0) + 1250,
+            "alumni": db.scalar(select(func.count(Student.id)).where(Student.status == "lulus")) or 0,
         },
     }
 

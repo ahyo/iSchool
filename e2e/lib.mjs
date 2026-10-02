@@ -59,7 +59,7 @@ export async function start({ args = [] } = {}) {
     async login(role) {
       const label = ROLE_LABEL[role] || role;
       if (API) {
-        const r = await fetch(API + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: USERNAME[label] || role, password: 'demo123' }) });
+        const r = await fetch(API + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: USERNAME[label] || role, password: process.env.PASSWORD || 'demo123' }) });
         const j = await r.json();
         await page.goto(BASE + '/login/', { waitUntil: 'networkidle0' });
         await page.evaluate((tok, u) => { localStorage.setItem('ischool-token', tok); localStorage.setItem('ischool-user', JSON.stringify(u)); }, j.access_token, j.user);

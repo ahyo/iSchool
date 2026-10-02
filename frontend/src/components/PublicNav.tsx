@@ -3,10 +3,10 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { GraduationCap, Menu, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { BRAND } from '@/lib/brand';
 
 const LINKS = [
   { href: '/#profil', label: 'Profil' },
-  { href: '/#jenjang', label: 'Jenjang' },
   { href: '/#berita', label: 'Berita' },
   { href: '/#agenda', label: 'Agenda' },
   { href: '/ppdb/', label: 'PPDB' },
@@ -21,7 +21,7 @@ export function PublicNav() {
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 sm:px-6">
         <Link href="/" className="flex items-center gap-2 font-bold text-slate-900">
           <span className="rounded-lg bg-brand-600 p-1.5 text-white"><GraduationCap className="h-5 w-5" /></span>
-          <span>Nusantara Cendekia</span>
+          <span>{BRAND.short}</span>
         </Link>
         <nav className="ml-auto hidden items-center gap-6 text-sm font-medium text-slate-600 md:flex">
           {LINKS.map((l) => (
@@ -51,8 +51,8 @@ export function PublicFooter({ name, address, phone, email }: { name?: string; a
     <footer id="kontak" className="bg-slate-900 text-slate-400">
       <div className="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-3">
         <div>
-          <p className="flex items-center gap-2 font-bold text-white"><GraduationCap className="h-5 w-5" /> {name || 'Nusantara Cendekia'}</p>
-          <p className="mt-3 text-sm">Lembaga pendidikan terpadu jenjang SD, SMP, SMA, dan SMK.</p>
+          <p className="flex items-center gap-2 font-bold text-white"><GraduationCap className="h-5 w-5" /> {name || BRAND.name}</p>
+          <p className="mt-3 text-sm">Sekolah Menengah Pertama Negeri di {BRAND.region}.</p>
         </div>
         <div className="text-sm">
           <p className="mb-2 font-semibold text-white">Kontak</p>
@@ -69,7 +69,7 @@ export function PublicFooter({ name, address, phone, email }: { name?: string; a
           </ul>
         </div>
       </div>
-      <div className="border-t border-slate-800 py-4 text-center text-xs">© {new Date().getFullYear()} {name}. Dibangun dengan iSchool.</div>
+      <div className="border-t border-slate-800 py-4 text-center text-xs">© {new Date().getFullYear()} {name || BRAND.name}. Dibangun dengan iSchool.</div>
     </footer>
   );
 }

@@ -9,6 +9,7 @@ import { useData, IS_DEMO } from '@/lib/api';
 import { Avatar, Loading } from './ui';
 import { NotificationBell } from './Notifications';
 import { cn } from '@/lib/utils';
+import { BRAND } from '@/lib/brand';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, ready, logout } = useAuth();
@@ -39,8 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <GraduationCap className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <p className="font-bold text-white">iSchool</p>
-            <p className="truncate text-[11px] text-slate-400">{data?.settings[0]?.foundation || 'Sistem Informasi Sekolah'}</p>
+            <p className="font-bold text-white">{BRAND.short}</p>
+            <p className="truncate text-[11px] text-slate-400">Sistem Informasi Sekolah</p>
           </div>
           <button className="ml-auto lg:hidden" onClick={() => setOpen(false)} aria-label="Tutup menu">
             <X className="h-5 w-5" />
@@ -75,7 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <button className="rounded-md p-1.5 hover:bg-slate-100 lg:hidden" onClick={() => setOpen(true)} aria-label="Buka menu">
           <Menu className="h-5 w-5" />
         </button>
-        {isStaff && data && (
+        {isStaff && data && data.units.length > 1 && (
           <select value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className="max-w-[16rem] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20">
             <option value={0}>Semua Unit</option>
             {data.units.map((u) => (

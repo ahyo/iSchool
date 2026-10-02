@@ -1,0 +1,13 @@
+[Unit]
+Description=iSchool SMPN 3 Pandak API (FastAPI)
+After=network.target postgresql.service
+
+[Service]
+User=aio
+WorkingDirectory=/var/www/smpn3pandak/backend
+ExecStart=/var/www/smpn3pandak/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8110 --workers 2 --proxy-headers
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

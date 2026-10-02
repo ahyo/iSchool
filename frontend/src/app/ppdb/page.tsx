@@ -7,7 +7,7 @@ import { PublicFooter, PublicNav } from '@/components/PublicNav';
 import { Badge, Button, Card, Field, Input, Loading, Modal, Select, StatusBadge, Tabs, Textarea, toast } from '@/components/ui';
 import { cn, fmtDate, gradeLabel, rupiah } from '@/lib/utils';
 import type { Applicant, Bill, Major, Payment, Settings, Unit, FeeType } from '@/lib/types';
-import { SCHOOL_BANK } from '@/lib/finance';
+import { BankInfo } from '@/components/BankInfo';
 
 interface Portal { settings: Settings; units: Unit[]; majors: Major[]; fee_types: FeeType[] }
 
@@ -21,7 +21,7 @@ const STATUS_TEXT: Record<string, string> = {
   ditolak: 'Mohon maaf, pendaftaran belum dapat diterima.',
 };
 
-function PayModal({ bill, onClose, onPaid }: { bill: Bill | null; onClose: () => void; onPaid: () => void }) {
+function PayModal({ bill, settings, onClose, onPaid }: { bill: Bill | null; settings: Settings; onClose: () => void; onPaid: () => void }) {
   const [method, setMethod] = useState<Payment['method']>('Transfer Bank');
   const [reference, setReference] = useState('');
   const [busy, setBusy] = useState(false);
@@ -49,7 +49,7 @@ function PayModal({ bill, onClose, onPaid }: { bill: Bill | null; onClose: () =>
           </label>
         ))}
       </div>
-      {method === 'Transfer Bank' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">Transfer ke <b>{SCHOOL_BANK.bank}</b> no. <b className="font-mono">{SCHOOL_BANK.account}</b> a.n. {SCHOOL_BANK.holder}</p>}
+      {method === 'Transfer Bank' && <BankInfo settings={settings} />}
       {method === 'Virtual Account' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">No. VA (simulasi): <b>8808 {String(bill.id).padStart(4, '0')} 2027 0001</b></p>}
       <Field label={method === 'Transfer Bank' ? 'No. referensi / nama pengirim' : 'No. referensi (opsional)'} className="mt-3"><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>
       <p className="mt-3 text-xs text-slate-500">Pembayaran diverifikasi bagian keuangan sekolah (maks. 1×24 jam kerja). Status berubah menjadi lunas setelah dana dipastikan masuk.</p>
@@ -125,7 +125,7 @@ export default function PPDBPage() {
       <div className="bg-gradient-to-r from-brand-700 to-brand-900 py-12 text-white">
         <div className="mx-auto max-w-4xl px-4">
           <h1 className="text-3xl font-bold">Penerimaan Peserta Didik Baru</h1>
-          <p className="mt-2 text-brand-100">Tahun Ajaran 2027/2028 · Jalur siswa baru & siswa pindahan · SD, SMP, SMA, SMK</p>
+          <p className="mt-2 text-brand-100">Tahun Ajaran 2027/2028 · Jalur siswa baru & siswa pindahan · {data.settings.name}</p>
         </div>
       </div>
       <div className="mx-auto max-w-4xl px-4 py-8">
@@ -301,7 +301,7 @@ export default function PPDBPage() {
         )}
       </div>
       <PublicFooter name={data.settings.name} address={data.settings.address} phone={data.settings.phone} email={data.settings.email} />
-      <PayModal bill={payBill} onClose={() => setPayBill(null)} onPaid={() => {
+      <PayModal bill={payBill} settings={data.settings} onClose={() => setPayBill(null)} onPaid={() => {
         setPayBill(null);
         if (payBill) setSentBills((x) => [...x, payBill.id]);
         if (status) check(status.applicant.reg_no, status.applicant.birth_date);

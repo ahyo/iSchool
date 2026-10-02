@@ -4,7 +4,8 @@ import { Clock, CreditCard, Download, FilePlus2, Layers, Pencil, QrCode, Trash2,
 import { api, useData } from '@/lib/api';
 import { useAuth, useProfile, useWorkspace } from '@/lib/auth';
 import { Badge, Button, Card, DataTable, Field, Input, Loading, Modal, PageHeader, SearchInput, Select, StatCard, StatusBadge, Tabs, run, toast, type Column } from '@/components/ui';
-import { isVerified, payableRemaining, pendingFor, SCHOOL_BANK } from '@/lib/finance';
+import { isVerified, payableRemaining, pendingFor } from '@/lib/finance';
+import { BankInfo } from '@/components/BankInfo';
 import { FormModal } from '@/components/FormModal';
 import { ReceiptModal } from '@/components/Receipt';
 import { indexBy, sortClasses } from '@/lib/scope';
@@ -22,7 +23,7 @@ export default function TagihanPage() {
 /* ================= Siswa / Orang tua ================= */
 function MyBills() {
   const { student } = useProfile();
-  const { data } = useData(['bills', 'payments', 'fee_types']);
+  const { data } = useData(['bills', 'payments', 'fee_types', 'settings']);
   const [tab, setTab] = useState<'tagihan' | 'riwayat'>('tagihan');
   const [pay, setPay] = useState<Bill[] | null>(null);
   const [method, setMethod] = useState<Payment['method']>('Transfer Bank');
@@ -116,7 +117,7 @@ function MyBills() {
                 </label>
               ))}
             </div>
-            {method === 'Transfer Bank' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">Transfer ke <b>{SCHOOL_BANK.bank}</b><br />No. rekening <b className="font-mono">{SCHOOL_BANK.account}</b> a.n. {SCHOOL_BANK.holder}</p>}
+            {method === 'Transfer Bank' && <BankInfo settings={data.settings[0]} />}
             {method === 'Virtual Account' && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">No. VA: <b className="font-mono">8808 0{student.nis}</b> (BSI/BNI/Mandiri)</p>}
             <div className="mt-3 space-y-3">
               <Field label={method === 'Transfer Bank' ? 'No. referensi / nama pengirim' : 'No. referensi transaksi (opsional)'} required={method === 'Transfer Bank'}><Input value={ref.reference} onChange={(e) => setRef({ ...ref, reference: e.target.value })} placeholder="mis. TRF-BSI-12345 / a.n. Hendra Pratama" /></Field>

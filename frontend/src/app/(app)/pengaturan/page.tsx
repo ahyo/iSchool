@@ -66,15 +66,19 @@ export default function PengaturanPage() {
       <Tabs value={tab} onChange={setTab} tabs={[{ value: 'profil', label: 'Profil Sekolah' }, { value: 'unit', label: 'Unit / Jenjang' }, { value: 'tahun', label: 'Tahun Ajaran' }, { value: 'jurusan', label: 'Jurusan' }, { value: 'akun', label: 'Akun Pengguna' }, { value: 'sistem', label: 'Sistem' }]} />
 
       {tab === 'profil' && (
-        <Card actions={<Button size="sm" onClick={() => run(() => api.update('settings', s.id, s), 'Profil sekolah disimpan')}><Save className="h-4 w-4" /> Simpan</Button>} title="Profil Yayasan / Sekolah">
+        <Card actions={<Button size="sm" onClick={() => run(() => api.update('settings', s.id, s), 'Profil sekolah disimpan')}><Save className="h-4 w-4" /> Simpan</Button>} title="Profil Sekolah">
           <div className="grid gap-4 sm:grid-cols-2">
-            {([['name', 'Nama Lembaga'], ['foundation', 'Nama Yayasan'], ['phone', 'Telepon'], ['email', 'Email'], ['website', 'Website']] as const).map(([k, l]) => (
+            {([['name', 'Nama Sekolah'], ['foundation', 'Instansi Induk (mis. Dinas Pendidikan)'], ['phone', 'Telepon'], ['email', 'Email'], ['website', 'Website']] as const).map(([k, l]) => (
               <Field key={k} label={l}><Input value={s[k]} onChange={(e) => setS({ ...s, [k]: e.target.value })} /></Field>
             ))}
             <Field label="Alamat" className="sm:col-span-2"><Textarea value={s.address} onChange={(e) => setS({ ...s, address: e.target.value })} /></Field>
             <Field label="Visi" className="sm:col-span-2"><Textarea value={s.vision} onChange={(e) => setS({ ...s, vision: e.target.value })} /></Field>
             <Field label="Misi (satu per baris)" className="sm:col-span-2"><Textarea rows={5} value={s.mission} onChange={(e) => setS({ ...s, mission: e.target.value })} /></Field>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={s.ppdb_open} onChange={(e) => setS({ ...s, ppdb_open: e.target.checked })} /> PPDB online dibuka</label>
+            <p className="pt-2 text-sm font-semibold text-slate-700 sm:col-span-2">Rekening sekolah (ditampilkan saat siswa/orang tua membayar via transfer)</p>
+            {([['bank_name', 'Nama Bank'], ['bank_account', 'No. Rekening'], ['bank_holder', 'Atas Nama']] as const).map(([k, l]) => (
+              <Field key={k} label={l}><Input value={s[k] ?? ''} onChange={(e) => setS({ ...s, [k]: e.target.value })} /></Field>
+            ))}
+            <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={s.ppdb_open} onChange={(e) => setS({ ...s, ppdb_open: e.target.checked })} /> PPDB online dibuka</label>
           </div>
         </Card>
       )}

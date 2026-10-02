@@ -33,8 +33,8 @@ export function ReceiptModal({ payment, onClose }: { payment: Payment | null; on
       <div className="print-area text-sm">
         <div className="flex items-start justify-between border-b-2 border-slate-800 pb-3">
           <div>
-            <p className="font-bold">{data.settings[0].foundation}</p>
-            <p className="text-xs text-slate-500">{unit?.name} · {data.settings[0].address}</p>
+            <p className="font-bold">{data.settings[0].name}</p>
+            <p className="text-xs text-slate-500">{data.settings[0].address}</p>
           </div>
           <div className="text-right">
             <p className="text-lg font-bold">KWITANSI</p>

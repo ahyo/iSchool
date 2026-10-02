@@ -119,7 +119,7 @@ export const actions: Record<string, Handler> = {
         students: d.students.filter((s) => s.status === 'aktif').length,
         teachers: d.employees.filter((e) => e.type === 'guru' && e.is_active).length,
         classes: d.classes.length,
-        alumni: d.students.filter((s) => s.status === 'lulus').length + 1250,
+        alumni: d.students.filter((s) => s.status === 'lulus').length,
       },
     };
   },

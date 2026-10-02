@@ -9,5 +9,3 @@ export const pendingFor = (billId: number, payments: Payment[]) => payments.filt
 export function payableRemaining(bill: Bill, payments: Payment[]) {
   return bill.amount - bill.discount - bill.paid_amount - pendingFor(bill.id, payments).reduce((a, p) => a + p.amount, 0);
 }
-
-export const SCHOOL_BANK = { bank: 'Bank Syariah Indonesia (BSI)', account: '7123 4567 89', holder: 'Yayasan Nusantara Cendekia' };

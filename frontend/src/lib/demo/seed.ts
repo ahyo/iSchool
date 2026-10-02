@@ -949,6 +949,7 @@ type SeedPayment = Omit<Payment, 'status' | 'reference' | 'proof_url' | 'verifie
       vision: 'Menjadi lembaga pendidikan unggul yang melahirkan generasi berakhlak mulia, cerdas, kreatif, dan berdaya saing global.',
       mission: 'Menyelenggarakan pembelajaran berpusat pada siswa\nMenanamkan nilai karakter dan Profil Pelajar Pancasila\nMengembangkan literasi, numerasi, dan teknologi\nMembangun kemitraan dengan orang tua, masyarakat, dan dunia industri',
       ppdb_open: true, library_loan_days: 7, library_max_loans: 3, library_fine_per_day: 500,
+      bank_name: 'Bank Syariah Indonesia (BSI)', bank_account: '7123 4567 89', bank_holder: 'Yayasan Nusantara Cendekia',
     }],
     units, academic_years, users, employees, majors, subjects, classes, guardians, students, schedules,
     student_attendance, employee_attendance, materials, assignments, submissions, exams, exam_results, grades,

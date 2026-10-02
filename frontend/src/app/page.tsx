@@ -18,18 +18,13 @@ interface Portal {
   stats: { students: number; teachers: number; classes: number; alumni: number };
 }
 
-const UNIT_STYLE: Record<string, { color: string; desc: string }> = {
-  SD: { color: 'from-rose-500 to-orange-400', desc: 'Pondasi karakter, literasi, dan numerasi melalui pembelajaran yang menyenangkan.' },
-  SMP: { color: 'from-sky-500 to-blue-600', desc: 'Pengembangan potensi akademik dan kepemimpinan dengan Kurikulum Merdeka.' },
-  SMA: { color: 'from-violet-500 to-indigo-600', desc: 'Persiapan perguruan tinggi dengan peminatan MIPA dan IPS.' },
-  SMK: { color: 'from-emerald-500 to-teal-600', desc: 'Siap kerja & wirausaha: Teknik Komputer Jaringan dan Akuntansi.' },
-};
-
 export default function PortalPage() {
   const { data } = useAction<Portal>('public.portal');
   const [news, setNews] = useState<Announcement | null>(null);
   if (!data) return (<><PublicNav /><Loading /></>);
   const s = data.settings;
+  const unit = data.units[0];
+  const hasStats = data.stats.students > 0 || data.stats.teachers > 0;
 
   return (
     <div className="bg-white">
@@ -50,12 +45,12 @@ export default function PortalPage() {
               <Link href="/login/" className="rounded-lg border border-white/30 px-5 py-3 font-semibold hover:bg-white/10">Masuk ke iSchool</Link>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          {hasStats ? <div className="grid grid-cols-2 gap-4">
             {[
               { icon: Users, label: 'Siswa Aktif', value: data.stats.students },
               { icon: GraduationCap, label: 'Guru Profesional', value: data.stats.teachers },
               { icon: School, label: 'Rombongan Belajar', value: data.stats.classes },
-              { icon: Award, label: 'Alumni', value: data.stats.alumni.toLocaleString('id-ID') + '+' },
+              { icon: Award, label: 'Alumni', value: data.stats.alumni.toLocaleString('id-ID') },
             ].map((x) => (
               <div key={x.label} className="rounded-2xl border border-white/10 bg-white/10 p-5 backdrop-blur">
                 <x.icon className="h-6 w-6 text-brand-200" />
@@ -63,7 +58,14 @@ export default function PortalPage() {
                 <p className="text-sm text-brand-100">{x.label}</p>
               </div>
             ))}
-          </div>
+          </div> : unit && (
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur">
+              <School className="h-8 w-8 text-brand-200" />
+              <p className="mt-3 text-2xl font-bold">{unit.name}</p>
+              <p className="mt-1 text-brand-100">Kelas {unit.min_grade}–{unit.max_grade}{unit.accreditation && ` · Akreditasi ${unit.accreditation}`}{unit.npsn && ` · NPSN ${unit.npsn}`}</p>
+              {s.address && <p className="mt-3 flex items-start gap-2 text-sm text-brand-100"><MapPin className="mt-0.5 h-4 w-4 shrink-0" /> {s.address}</p>}
+            </div>
+          )}
         </div>
       </section>
 
@@ -71,15 +73,16 @@ export default function PortalPage() {
       <section id="profil" className="mx-auto max-w-7xl scroll-mt-16 px-4 py-20 sm:px-6">
         <div className="grid gap-10 lg:grid-cols-2">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">Profil Yayasan</p>
-            <h2 className="mt-2 text-3xl font-bold text-slate-900">Pendidikan berkarakter dari SD hingga SMK</h2>
-            <p className="mt-4 text-slate-600">{s.foundation} menyelenggarakan pendidikan terpadu empat jenjang dalam satu ekosistem. Seluruh layanan — mulai dari pendaftaran, pembayaran, pembelajaran, hingga rapor — terintegrasi secara digital sehingga orang tua dapat memantau perkembangan anak kapan saja.</p>
-            <div className="mt-6 rounded-xl bg-brand-50 p-5">
+            <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">Profil Sekolah</p>
+            <h2 className="mt-2 text-3xl font-bold text-slate-900">{s.name}</h2>
+            <p className="mt-4 text-slate-600">Seluruh layanan sekolah — mulai dari pendaftaran, pembayaran, presensi, pembelajaran, ujian, hingga rapor — terintegrasi secara digital sehingga orang tua dapat memantau perkembangan anak kapan saja.</p>
+            {unit && <p className="mt-3 text-sm text-slate-500">Jenjang SMP · Kelas {unit.min_grade}–{unit.max_grade}{unit.npsn && ` · NPSN ${unit.npsn}`}{unit.accreditation && ` · Akreditasi ${unit.accreditation}`}</p>}
+            {s.vision && <div className="mt-6 rounded-xl bg-brand-50 p-5">
               <p className="font-semibold text-brand-900">Visi</p>
               <p className="mt-1 text-slate-700">{s.vision}</p>
-            </div>
+            </div>}
           </div>
-          <div>
+          {s.mission.trim() && <div>
             <p className="mb-3 font-semibold text-slate-900">Misi</p>
             <ul className="space-y-3">
               {s.mission.split('\n').filter(Boolean).map((m) => (
@@ -89,45 +92,12 @@ export default function PortalPage() {
                 </li>
               ))}
             </ul>
-          </div>
-        </div>
-      </section>
-
-      {/* Jenjang */}
-      <section id="jenjang" className="scroll-mt-16 bg-slate-50 py-20">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
-          <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">Jenjang Pendidikan</p>
-          <h2 className="mt-2 text-3xl font-bold text-slate-900">Empat unit, satu visi</h2>
-          <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {data.units.map((u) => {
-              const st = UNIT_STYLE[u.code];
-              const majors = data.majors.filter((m) => m.unit_id === u.id);
-              const spp = data.fee_types.find((f) => f.unit_id === u.id && f.category === 'bulanan');
-              return (
-                <div key={u.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className={`bg-gradient-to-br ${st.color} p-6 text-white`}>
-                    <p className="text-3xl font-extrabold">{u.code}</p>
-                    <p className="text-sm opacity-90">{u.name}</p>
-                  </div>
-                  <div className="space-y-3 p-5 text-sm">
-                    <p className="text-slate-600">{st.desc}</p>
-                    <p className="text-slate-500">Kelas {u.min_grade}–{u.max_grade} · Akreditasi {u.accreditation} · NPSN {u.npsn}</p>
-                    {majors.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {majors.map((m) => <Badge key={m.id} tone="blue">{m.code}</Badge>)}
-                      </div>
-                    )}
-                    {spp && <p className="font-semibold text-slate-800">SPP {rupiah(spp.amount)}/bulan</p>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          </div>}
         </div>
       </section>
 
       {/* Berita */}
-      <section id="berita" className="mx-auto max-w-7xl scroll-mt-16 px-4 py-20 sm:px-6">
+      {data.announcements.length > 0 && <section id="berita" className="mx-auto max-w-7xl scroll-mt-16 px-4 py-20 sm:px-6">
         <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">Kabar Sekolah</p>
         <h2 className="mt-2 text-3xl font-bold text-slate-900">Berita & Pengumuman</h2>
         <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -143,10 +113,10 @@ export default function PortalPage() {
             </button>
           ))}
         </div>
-      </section>
+      </section>}
 
       {/* Agenda */}
-      <section id="agenda" className="scroll-mt-16 bg-slate-50 py-20">
+      {data.events.length > 0 && <section id="agenda" className="scroll-mt-16 bg-slate-50 py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
           <p className="text-sm font-semibold uppercase tracking-wider text-brand-600">Kalender</p>
           <h2 className="mt-2 text-3xl font-bold text-slate-900">Agenda Mendatang</h2>
@@ -166,14 +136,14 @@ export default function PortalPage() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* CTA */}
       <section className="mx-auto max-w-7xl px-4 py-20 sm:px-6">
         <div className="flex flex-col items-start justify-between gap-6 rounded-3xl bg-gradient-to-r from-brand-600 to-brand-800 p-10 text-white md:flex-row md:items-center">
           <div>
             <h2 className="text-2xl font-bold sm:text-3xl">Bergabunglah bersama kami</h2>
-            <p className="mt-2 max-w-xl text-brand-100">Pendaftaran siswa baru dan siswa pindahan untuk seluruh jenjang dapat dilakukan secara online. Pantau status pendaftaran dan lakukan pembayaran langsung dari portal.</p>
+            <p className="mt-2 max-w-xl text-brand-100">Pendaftaran siswa baru dan siswa pindahan dapat dilakukan secara online. Pantau status pendaftaran dan lakukan pembayaran langsung dari portal.</p>
           </div>
           <div className="flex gap-3">
             <Link href="/ppdb/" className="inline-flex items-center gap-2 rounded-lg bg-white px-5 py-3 font-semibold text-brand-700"><BookOpen className="h-4 w-4" /> Daftar Online</Link>

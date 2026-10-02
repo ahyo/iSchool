@@ -15,6 +15,10 @@ export interface Settings {
   library_loan_days: number;
   library_max_loans: number;
   library_fine_per_day: number;
+  /** Rekening sekolah untuk pembayaran transfer (kosong = tidak ditampilkan). */
+  bank_name: string;
+  bank_account: string;
+  bank_holder: string;
 }
 
 export interface Unit {

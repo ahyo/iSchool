@@ -7,6 +7,7 @@ import { useAuth, ROLE_LABEL } from '@/lib/auth';
 import { IS_DEMO } from '@/lib/api';
 import { Button, Field, Input } from '@/components/ui';
 import type { Role } from '@/lib/types';
+import { BRAND } from '@/lib/brand';
 
 const DEMO: { role: Role; username: string; icon: React.ElementType; desc: string }[] = [
   { role: 'admin', username: 'admin', icon: ShieldCheck, desc: 'Akses penuh semua modul' },
@@ -50,13 +51,13 @@ export default function LoginPage() {
         <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full bg-white/5" />
         <div className="absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-white/5" />
         <Link href="/" className="relative flex items-center gap-2 font-bold">
-          <GraduationCap className="h-7 w-7" /> iSchool
+          <GraduationCap className="h-7 w-7" /> {BRAND.short}
         </Link>
         <div className="relative">
-          <h1 className="text-4xl font-extrabold leading-tight">Satu sistem untuk seluruh ekosistem sekolah.</h1>
-          <p className="mt-4 max-w-md text-brand-100">SD, SMP, SMA, dan SMK dalam satu platform: PPDB online, keuangan, presensi, pembelajaran daring, rapor, hingga kelulusan.</p>
+          <h1 className="text-4xl font-extrabold leading-tight">Sistem Informasi {BRAND.name}</h1>
+          <p className="mt-4 max-w-md text-brand-100">PPDB online, keuangan, presensi, pembelajaran daring & ujian CBT, rapor, hingga kelulusan dalam satu platform.</p>
         </div>
-        <p className="relative text-sm text-brand-200">© {new Date().getFullYear()} Yayasan Nusantara Cendekia</p>
+        <p className="relative text-sm text-brand-200">© {new Date().getFullYear()} {BRAND.name} · {BRAND.region}</p>
       </div>
 
       <div className="flex items-center justify-center p-6">
@@ -64,7 +65,7 @@ export default function LoginPage() {
           <Link href="/" className="mb-6 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700">
             <ArrowLeft className="h-4 w-4" /> Kembali ke portal
           </Link>
-          <h2 className="text-2xl font-bold text-slate-900">Masuk ke iSchool</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Masuk ke Sistem Sekolah</h2>
           <p className="mt-1 text-sm text-slate-500">Gunakan akun yang diberikan oleh sekolah.</p>
 
           <form

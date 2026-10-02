@@ -4,8 +4,8 @@ import { AuthProvider, WorkspaceProvider } from '@/lib/auth';
 import { Toaster } from '@/components/ui';
 
 export const metadata: Metadata = {
-  title: 'iSchool — Sistem Informasi Sekolah Terpadu',
-  description: 'Sistem informasi sekolah untuk SD, SMP, SMA, dan SMK: PPDB, keuangan, presensi, akademik, dan kepegawaian.',
+  title: 'SMP Negeri 3 Pandak — Sistem Informasi Sekolah',
+  description: 'Sistem informasi SMP Negeri 3 Pandak, Bantul: PPDB, keuangan, presensi, pembelajaran, ujian, rapor, dan kepegawaian.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
